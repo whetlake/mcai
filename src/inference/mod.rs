@@ -150,19 +150,6 @@ impl InferenceEngine {
         Ok(())
     }
 
-    /// Saves the model registry to disk.
-    ///
-    /// # Arguments
-    ///
-    /// * `registry` - The model registry to save
-    fn save_registry(&self) -> Result<(), Box<dyn Error + Send + Sync>> {
-        let registry_path = self.models_dir.join("model_registry.json");
-        let registry = self.registry.read().map_err(|e| e.to_string())?;
-        let content = serde_json::to_string_pretty(&*registry)?;
-        fs::write(registry_path, content)?;
-        Ok(())
-    }
-
     /// Ensures the models directory exists, creating it if necessary.
     fn ensure_models_dir(&self) -> Result<(), Box<dyn Error + Send + Sync>> {
         if !self.models_dir.exists() {
@@ -320,9 +307,17 @@ impl InferenceEngine {
         pb.disable_steady_tick();
         pb.finish_with_message(status.clone());
 
+        println!("Siin olen");
+
         if new_models > 0 {
-            self.save_registry()?;
+            // Serialize and save the registry directly while we have the write lock
+            let registry_path = self.models_dir.join("model_registry.json");
+            let content = serde_json::to_string_pretty(&*registry)?;
+            fs::write(registry_path, content)?;
+            println!("Registry saved with {} new models", new_models);
         }
+
+        println!("Seal olen!");
         Ok(())
     }
 
@@ -339,7 +334,18 @@ impl InferenceEngine {
         
         // Perform the scan
         info!("Scanning for new models...");
-        self.scan_new_models(&mut registry)?;
-        Ok(())
+        
+        // We need to handle the scan_new_models differently to avoid deadlock
+        // First ensure models directory exists
+        self.ensure_models_dir()?;
+        
+        // Then perform the scan and get the result
+        let scan_result = self.scan_new_models(&mut registry);
+        
+        // Drop the write lock by ending the scope
+        drop(registry);
+        
+        // Now return the result
+        scan_result
     }
 }
