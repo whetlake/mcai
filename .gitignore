@@ -1,0 +1,39 @@
+/target
+
+# Ignore GGUF model files
+models/*.gguf
+*.gguf
+
+# But keep the models directory
+!models/
+!models/.gitkeep
+
+# Ignore local configuration
+config/local.toml
+
+# Ignore log files
+/mcai.log
+*.log
+logs/
+/logs/
+
+# Ignore environment variables
+.env
+.env.*
+!.env.example
+.env.local
+.env.development
+.env.test
+.env.production
+
+# IDE and editor files
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS specific files
+.DS_Store
+Thumbs.db
+
