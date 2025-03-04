@@ -21,7 +21,7 @@ use std::error::Error;
 use std::sync::RwLock;  // Add this for thread-safe state
 use std::path::PathBuf;
 use std::fs;
-use tracing::info;
+use tracing::{info, error, debug};
 use crate::gguf::{GGUFReader, GGUFError, is_gguf_file};  // Add GGUF parser and standalone function
 use crate::model::Model;
 use comfy_table::{Table, Cell, ContentArrangement};
@@ -31,12 +31,13 @@ use chrono::{DateTime, Utc, serde::ts_seconds};
 use std::thread;
 use std::time::Duration;
 use indicatif::{ProgressBar, ProgressStyle};
+use colored::*;
 
 /// Represents a model entry in the registry file.
 ///
 /// This struct contains persistent metadata about available models
 /// and is serialized to/from the model_registry.json file.
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct ModelEntry {
     /// Filename of the model file (relative to models directory)
     pub filename: String,
@@ -50,6 +51,8 @@ pub struct ModelEntry {
     pub architecture: String,
     /// Quantization format (e.g., "Q4_K_M", "Q5_K_M")
     pub quantization: String,
+    /// Number of tensors in the model
+    pub tensor_count: u64,
     /// When the model was added to the registry
     #[serde(with = "ts_seconds")]
     pub added_date: DateTime<Utc>,
@@ -107,6 +110,8 @@ pub struct InferenceEngine {
     pub models_dir: PathBuf,
     /// Index of available models (label, path)
     pub model_index: RwLock<Vec<(String, PathBuf)>>,
+    /// Registry of all available models and their metadata
+    pub registry: RwLock<HashMap<String, ModelEntry>>,
 }
 
 impl InferenceEngine {
@@ -123,6 +128,7 @@ impl InferenceEngine {
             in_discussion: RwLock::new(false),
             models_dir,
             model_index: RwLock::new(Vec::new()),
+            registry: RwLock::new(HashMap::new()),
         }
     }
 
@@ -133,15 +139,15 @@ impl InferenceEngine {
     /// # Returns
     ///
     /// A hashmap of model entries where the key is the filename
-    pub fn load_or_create_registry(&self) -> Result<HashMap<String, ModelEntry>, Box<dyn Error + Send + Sync>> {
+    pub fn load_or_create_registry(&self) -> Result<(), Box<dyn Error + Send + Sync>> {
         let registry_path = self.models_dir.join("model_registry.json");
+        let mut registry = self.registry.write().map_err(|e| e.to_string())?;
         
         if registry_path.exists() {
             let content = fs::read_to_string(&registry_path)?;
-            Ok(serde_json::from_str(&content)?)
-        } else {
-            Ok(HashMap::new())
+            *registry = serde_json::from_str(&content)?;
         }
+        Ok(())
     }
 
     /// Saves the model registry to disk.
@@ -149,9 +155,10 @@ impl InferenceEngine {
     /// # Arguments
     ///
     /// * `registry` - The model registry to save
-    fn save_registry(&self, registry: &HashMap<String, ModelEntry>) -> Result<(), Box<dyn Error + Send + Sync>> {
+    fn save_registry(&self) -> Result<(), Box<dyn Error + Send + Sync>> {
         let registry_path = self.models_dir.join("model_registry.json");
-        let content = serde_json::to_string_pretty(registry)?;
+        let registry = self.registry.read().map_err(|e| e.to_string())?;
+        let content = serde_json::to_string_pretty(&*registry)?;
         fs::write(registry_path, content)?;
         Ok(())
     }
@@ -245,6 +252,23 @@ impl InferenceEngine {
                         (Ok(name), Ok(label), Ok(size), Ok(arch), Ok(quant)) => {
                             // Update spinner to show this file completed successfully
                             pb.set_message(format!("Successfully processed: {} ({}/{})", filename, i + 1, total));
+                            
+                            // Create new model entry
+                            let model_entry = ModelEntry {
+                                filename: filename.clone(),
+                                label: label.to_string(),
+                                name: name.to_string(),
+                                size: size.to_string(),
+                                architecture: arch.to_string(),
+                                quantization: quant.to_string(),
+                                tensor_count: reader.tensor_count,
+                                added_date: Utc::now(),
+                                last_used: None,
+                            };
+
+                            // Add to registry
+                            registry.insert(filename, model_entry);
+                            
                             // Update counter
                             new_models += 1;
                         },
@@ -252,7 +276,7 @@ impl InferenceEngine {
                             // Update spinner to show this file failed
                             pb.set_message(format!("Metadata extraction failed: {} ({}/{})", filename, i + 1, total));
                             failed_models += 1;
-                            println!("\nFailed to read metadata from: {}", filename);
+                            error!("Failed to read metadata from: {}", filename);
                         }
                     }
                 },
@@ -294,10 +318,10 @@ impl InferenceEngine {
             failed_models
         );
         pb.disable_steady_tick();
-        pb.finish_with_message(status);
+        pb.finish_with_message(status.clone());
 
         if new_models > 0 {
-            self.save_registry(&registry)?;
+            self.save_registry()?;
         }
         Ok(())
     }
@@ -307,11 +331,15 @@ impl InferenceEngine {
     /// This is a convenience method that combines loading the registry
     /// and scanning for new models.
     pub fn scan_models(&self) -> Result<(), Box<dyn Error + Send + Sync>> {
+        // Load existing registry first
+        self.load_or_create_registry()?;
+        
+        // Get a mutable reference to the registry
+        let mut registry = self.registry.write().map_err(|e| e.to_string())?;
+        
         // Perform the scan
-        info!("Loading or creating model registry...");
-        let mut registry = self.load_or_create_registry()?;
+        info!("Scanning for new models...");
         self.scan_new_models(&mut registry)?;
         Ok(())
     }
-
 }

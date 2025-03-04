@@ -1,12 +1,14 @@
-use axum::{routing::{get, post}, Router, Json, extract::State};
+use axum::{routing::{get, post}, Router, Json, extract::State, response::IntoResponse};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tokio::net::TcpListener;
 use crate::inference::InferenceEngine;
-use crate::inference::ModelDetails;
+use crate::inference::{ModelDetails, ModelEntry};
 use tracing::{info, warn, error};
+use std::error::Error;
+use std::collections::HashMap;
 
-#[derive(Deserialize, Serialize)]
+#[derive(Deserialize, Serialize, Clone)]
 pub struct GenerateRequest {
     pub prompt: String,
 }
@@ -17,7 +19,11 @@ pub struct GenerateResponse {
 }
 
 #[derive(Serialize)]
-pub struct ModelsResponse(Vec<String>);
+pub struct ApiResponse<T> {
+    pub status: String,
+    pub data: Option<T>,
+    pub message: Option<String>,
+}
 
 #[derive(Serialize, Deserialize)]
 pub struct CurrentModelResponse {
@@ -48,11 +54,12 @@ impl ApiServer {
         }
     }
 
-    pub async fn start(&self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    pub async fn start(&self) -> Result<(), Box<dyn Error + Send + Sync>> {
         let app_state = Arc::clone(&self.engine);
         
         let app = Router::new()
             .route("/", get(health_check))
+            .route("/models", get(list_models))
             .with_state(app_state);
 
         info!("Starting server on {}:{}", self.host, self.port);
@@ -68,4 +75,34 @@ impl ApiServer {
 async fn health_check() -> &'static str {
     info!("Health check endpoint called");
     "MCAI is running!"
+}
+
+/// Returns a list of all available models in JSON format.
+/// The models are sorted by label for consistent ordering.
+async fn list_models(State(engine): State<Arc<InferenceEngine>>) -> impl IntoResponse {
+    info!("Models endpoint called");
+    
+    // Get the model registry
+    match engine.registry.read() {
+        Ok(registry) => {
+            info!("Successfully retrieved model registry");
+            // Convert registry values to a vector and sort by label
+            let mut models: Vec<ModelEntry> = registry.values().map(|v| v.clone()).collect();
+            models.sort_by(|a, b| a.label.cmp(&b.label));
+            
+            Json(ApiResponse {
+                status: "success".to_string(),
+                data: Some(models),
+                message: None,
+            })
+        },
+        Err(e) => {
+            error!("Failed to read model registry: {}", e);
+            Json(ApiResponse {
+                status: "error".to_string(),
+                data: None,
+                message: Some(format!("Failed to read model registry: {}", e)),
+            })
+        }
+    }
 }
