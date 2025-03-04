@@ -39,6 +39,9 @@ use colored::*;
 /// and is serialized to/from the model_registry.json file.
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct ModelEntry {
+    /// Position in the model list (optional)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub number: Option<usize>,
     /// Filename of the model file (relative to models directory)
     pub filename: String,
     /// Short identifier/label for the model
@@ -147,6 +150,22 @@ impl InferenceEngine {
             let content = fs::read_to_string(&registry_path)?;
             *registry = serde_json::from_str(&content)?;
         }
+        
+        // Assign model numbers based on added_date (newest first)
+        let mut models: Vec<(String, ModelEntry)> = registry.iter()
+            .map(|(k, v)| (k.clone(), v.clone()))
+            .collect();
+        
+        // Sort by added_date in descending order (newest first)
+        models.sort_by(|a, b| b.1.added_date.cmp(&a.1.added_date));
+        
+        // Assign numbers (1 to newest, 2 to second newest, etc.)
+        for (i, (filename, model_entry)) in models.into_iter().enumerate() {
+            let mut updated_model = model_entry;
+            updated_model.number = Some(i + 1);
+            registry.insert(filename, updated_model);
+        }
+        
         Ok(())
     }
 
@@ -242,6 +261,7 @@ impl InferenceEngine {
                             
                             // Create new model entry
                             let model_entry = ModelEntry {
+                                number: None, // Will be assigned when registry is saved
                                 filename: filename.clone(),
                                 label: label.to_string(),
                                 name: name.to_string(),
@@ -341,6 +361,21 @@ impl InferenceEngine {
         
         // Then perform the scan and get the result
         let scan_result = self.scan_new_models(&mut registry);
+        
+        // If new models were added, reassign model numbers based on added_date
+        let mut models: Vec<(String, ModelEntry)> = registry.iter()
+            .map(|(k, v)| (k.clone(), v.clone()))
+            .collect();
+        
+        // Sort by added_date in descending order (newest first)
+        models.sort_by(|a, b| b.1.added_date.cmp(&a.1.added_date));
+        
+        // Assign numbers (1 to newest, 2 to second newest, etc.)
+        for (i, (filename, model_entry)) in models.into_iter().enumerate() {
+            let mut updated_model = model_entry;
+            updated_model.number = Some(i + 1);
+            registry.insert(filename, updated_model);
+        }
         
         // Drop the write lock by ending the scope
         drop(registry);

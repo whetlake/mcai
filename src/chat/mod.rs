@@ -9,6 +9,10 @@ const CYAN: &str = "\x1b[36m";
 const BRIGHT_CYAN: &str = "\x1b[96m";
 const RESET: &str = "\x1b[0m";
 
+// Import the display module
+mod display;
+use display::display_models_table;
+
 fn print_help(model_attached: bool) {
     println!("\n{CYAN}MCAI Chat Commands{RESET}");
     println!("{BRIGHT_CYAN}{}{RESET}", "=".repeat(50));
@@ -71,7 +75,8 @@ pub async fn chat_loop(settings: &Settings) -> Result<(), Box<dyn Error + Send +
                             Ok(response) => {
                                 match response.text().await {
                                     Ok(text) => {
-                                        println!("{}", text);
+                                        // Use the display_models_table function instead of just printing the raw text
+                                        display_models_table(&text);
                                     },
                                     Err(e) => {
                                         println!("Error reading response: {}", e);
