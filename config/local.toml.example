@@ -1,0 +1,10 @@
+# Example local configuration overrides
+# Copy this file to local.toml and modify as needed
+
+[server]
+# Use a different port for development
+port = 3001
+
+[logging]
+# More verbose logging during development
+level = "debug"

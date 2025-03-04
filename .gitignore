@@ -1,12 +1,11 @@
 /target
 
-# Ignore GGUF model files
-models/*.gguf
-*.gguf
+# Ignore models directory contents
+models/*
+models/model_registry.json
 
-# But keep the models directory
+# But keep the models directory itself
 !models/
-!models/.gitkeep
 
 # Ignore local configuration
 config/local.toml
