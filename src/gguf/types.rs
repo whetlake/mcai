@@ -183,3 +183,65 @@ impl From<u32> for GGUFValueType {
         }
     }
 }
+
+/// Information about a tensor in the GGUF file
+#[derive(Debug, Clone)]
+pub struct TensorInfo {
+    /// Name/label of the tensor
+    pub name: String,
+    /// Number of dimensions
+    pub n_dims: u32,
+    /// Size of each dimension
+    pub dims: Vec<u64>,
+    /// Data type of the tensor
+    pub data_type: u32,
+    /// Offset in the file where tensor data begins
+    pub offset: u64,
+}
+
+impl TensorInfo {
+    /// Returns a human-readable string representation of the tensor's data type.
+    ///
+    /// This method maps the numeric data type to its corresponding string representation,
+    /// including all supported GGUF data types and quantization formats.
+    ///
+    /// # Returns
+    ///
+    /// A string representing the data type, or "UNKNOWN" if the type is not recognized.
+    pub fn type_string(&self) -> &'static str {
+        match self.data_type {
+            0 => "UINT8",
+            1 => "INT8",
+            2 => "UINT16",
+            3 => "INT16",
+            4 => "UINT32",
+            5 => "INT32",
+            6 => "FLOAT32",
+            7 => "BOOL",
+            8 => "STRING",
+            9 => "ARRAY",
+            10 => "UINT64",
+            11 => "INT64",
+            12 => "FLOAT64",
+            13 => "Q4_K",    // Quantized 4-bit
+            14 => "Q5_K",    // Quantized 5-bit
+            15 => "Q8_K",    // Quantized 8-bit
+            16 => "Q4_0",    // Quantized 4-bit (old format)
+            17 => "Q4_1",    // Quantized 4-bit (old format)
+            18 => "Q5_0",    // Quantized 5-bit (old format)
+            19 => "Q5_1",    // Quantized 5-bit (old format)
+            20 => "Q8_0",    // Quantized 8-bit (old format)
+            21 => "Q8_1",    // Quantized 8-bit (old format)
+            _ => "UNKNOWN",
+        }
+    }
+}
+
+impl fmt::Display for TensorInfo {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "{} [{}]", self.name, self.dims.iter()
+            .map(|d| d.to_string())
+            .collect::<Vec<_>>()
+            .join(" × "))
+    }
+}

@@ -245,17 +245,8 @@ impl InferenceEngine {
                         (Ok(name), Ok(label), Ok(size), Ok(arch), Ok(quant)) => {
                             // Update spinner to show this file completed successfully
                             pb.set_message(format!("Successfully processed: {} ({}/{})", filename, i + 1, total));
-
-                            println!("Name: {:?}", name);
-                            println!("Label: {:?}", label);
-                            println!("Size: {:?}", size);
-                            println!("Architecture: {:?}", arch);
-                            println!("Quantization: {:?}", quant);
-                            
                             // Update counter
                             new_models += 1;
-
-                            reader.print_metadata_table();
                         },
                         _ => {
                             // Update spinner to show this file failed

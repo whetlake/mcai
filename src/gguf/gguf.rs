@@ -5,7 +5,7 @@ use std::collections::BTreeMap;
 use byteorder::{LittleEndian, ReadBytesExt};
 use std::io::{Seek, SeekFrom, Read};
 use crate::gguf::is_gguf_file;
-use super::types::{GGUFValue, GGUFError, GGUFValueType};
+use super::types::{GGUFValue, GGUFError, GGUFValueType, TensorInfo};
 use crate::gguf::gguf_utils;
 use comfy_table::*;
 use tracing::{info, error, debug};
@@ -22,6 +22,7 @@ use tracing::{info, error, debug};
 /// * `is_valid_gguf` - Whether the file is a valid GGUF file
 /// * `tensor_count` - Number of tensors in the model
 /// * `metadata` - Key-value pairs of metadata stored in the file
+/// * `tensors` - Information about all tensors in the model
 ///
 /// # Examples
 ///
@@ -36,6 +37,7 @@ pub struct GGUFReader {
     pub is_valid_gguf: bool,
     pub tensor_count: u64,
     pub metadata: BTreeMap<String, (String, GGUFValue)>,
+    pub tensors: Vec<TensorInfo>,
 }
 
 /// The magic number that identifies GGUF files
@@ -117,11 +119,15 @@ impl GGUFReader {
 
         info!("Successfully read {}/{} metadata entries from GGUF file", actual_count, metadata_count);
         
+        // Read tensor information
+        let tensors = read_tensor_info(&mut file, tensor_count, version)?;
+        
         Ok(Self {
             path: path_box,
             is_valid_gguf: true,
             tensor_count,
             metadata,
+            tensors,
         })
     }
 
@@ -188,6 +194,55 @@ impl GGUFReader {
             };
 
             table.add_row(vec![key, type_str, &value_str]);
+        }
+
+        println!("{}", table);
+    }
+
+    /// Displays the tensor information in a formatted table.
+    ///
+    /// This method prints all tensor information in a nicely formatted
+    /// table using the comfy-table crate. It's useful for debugging and
+    /// displaying model structure.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// let reader = GGUFReader::new("model.gguf")?;
+    /// reader.print_tensor_table();
+    /// ```
+    pub fn print_tensor_table(&self) {
+        let mut table = Table::new();
+        table
+            .set_header(vec!["Name", "Dimensions", "Type", "Offset"])
+            .load_preset(comfy_table::presets::UTF8_FULL)
+            .set_content_arrangement(ContentArrangement::Dynamic);
+
+        for tensor in &self.tensors {
+            let dims_str = tensor.dims.iter()
+                .map(|d| d.to_string())
+                .collect::<Vec<_>>()
+                .join(" × ");
+            
+            // Format offset as a human-readable number
+            let offset_str = if tensor.offset == 0 {
+                "0".to_string()
+            } else {
+                let mut s = tensor.offset.to_string();
+                let mut i = s.len();
+                while i > 3 {
+                    i -= 3;
+                    s.insert(i, ',');
+                }
+                s
+            };
+
+            table.add_row(vec![
+                &tensor.name,
+                &dims_str,
+                tensor.type_string(),
+                &offset_str,
+            ]);
         }
 
         println!("{}", table);
@@ -285,4 +340,66 @@ fn read_metadata_kv(file: &mut File, version: u32) -> Result<(String, String, GG
             Ok((key, type_str, value))
         }
     }
+}
+
+/// Reads tensor information from the GGUF file.
+///
+/// This function parses the tensor information section of the GGUF file,
+/// reading the name, dimensions, and data type for each tensor.
+///
+/// # Arguments
+///
+/// * `file` - The file to read from
+/// * `tensor_count` - Number of tensors to read
+/// * `version` - The GGUF file version
+///
+/// # Returns
+///
+/// * `Result<Vec<TensorInfo>, Box<dyn Error + Send + Sync>>` - Vector of tensor information
+///   or an error if reading fails
+fn read_tensor_info(file: &mut File, tensor_count: u64, version: u32) -> Result<Vec<TensorInfo>, Box<dyn Error + Send + Sync>> {
+    let mut tensors = Vec::with_capacity(tensor_count as usize);
+
+    for _ in 0..tensor_count {
+        // Read tensor name
+        let name = gguf_utils::read_string(file, version, false)?;
+        
+        // Read number of dimensions
+        let n_dims = if version >= 3 {
+            file.read_u32::<LittleEndian>()?
+        } else {
+            file.read_u32::<LittleEndian>()?
+        };
+
+        // Read dimensions
+        let mut dims = Vec::with_capacity(n_dims as usize);
+        for _ in 0..n_dims {
+            let dim = if version >= 3 {
+                file.read_u64::<LittleEndian>()?
+            } else {
+                file.read_u32::<LittleEndian>()? as u64
+            };
+            dims.push(dim);
+        }
+
+        // Read data type
+        let data_type = file.read_u32::<LittleEndian>()?;
+
+        // Read offset
+        let offset = if version >= 3 {
+            file.read_u64::<LittleEndian>()?
+        } else {
+            file.read_u32::<LittleEndian>()? as u64
+        };
+
+        tensors.push(TensorInfo {
+            name,
+            n_dims,
+            dims,
+            data_type,
+            offset,
+        });
+    }
+
+    Ok(tensors)
 }
