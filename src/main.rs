@@ -5,7 +5,6 @@ use tracing_appender;
 use tracing::info;
 
 mod gguf;
-mod model;
 mod inference;
 mod server;
 mod config;

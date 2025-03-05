@@ -30,6 +30,19 @@ pub struct CurrentModelResponse {
     pub model: Option<ModelDetails>,
 }
 
+/// Request to attach a model by number
+#[derive(Deserialize)]
+pub struct AttachModelRequest {
+    pub model_number: usize,
+}
+
+#[derive(Serialize)]
+struct AttachModelResponse {
+    name: String,
+    label: String,
+    greeting: String,
+}
+
 pub struct ApiServer {
     engine: Arc<InferenceEngine>,
     host: String,
@@ -58,8 +71,8 @@ impl ApiServer {
         let app_state = Arc::clone(&self.engine);
         
         let app = Router::new()
-            .route("/", get(health_check))
             .route("/models", get(list_models))
+            .route("/attach", post(attach_model))
             .with_state(app_state);
 
         info!("Starting server on {}:{}", self.host, self.port);
@@ -102,6 +115,47 @@ async fn list_models(State(engine): State<Arc<InferenceEngine>>) -> impl IntoRes
                 status: "error".to_string(),
                 data: None,
                 message: Some(format!("Failed to read model registry: {}", e)),
+            })
+        }
+    }
+}
+
+/// Attaches a model by its number
+async fn attach_model(
+    State(engine): State<Arc<InferenceEngine>>,
+    Json(request): Json<AttachModelRequest>
+) -> impl IntoResponse {
+    info!("Attach model endpoint called with model number: {}", request.model_number);
+   
+    if request.model_number == 0 {
+        error!("Invalid model number: Model numbering starts at 1");
+        return Json(ApiResponse {
+            status: "error".to_string(),
+            data: None,
+            message: Some("Invalid model number: Model numbering starts at 1".to_string()),
+        });
+    }
+
+    match engine.attach_model(request.model_number) {
+        Ok(model) => {
+            info!("Successfully attached model: {}", model.name);
+            let response = AttachModelResponse {
+                name: model.name.clone(),
+                label: model.label.clone(),
+                greeting: format!("Hello, thank you for choosing {}. Type to start interaction or type 'mcai help' to see more commands.", model.name),
+            };
+            Json(ApiResponse {
+                status: "success".to_string(),
+                data: Some(response),
+                message: None,
+            })
+        },
+        Err(e) => {
+            error!("Failed to attach model: {}", e);
+            Json(ApiResponse {
+                status: "error".to_string(),
+                data: None,
+                message: Some(format!("Failed to attach model: {}", e)),
             })
         }
     }

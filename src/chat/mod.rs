@@ -3,15 +3,27 @@ use rustyline::DefaultEditor;
 use crate::config::Settings;
 use std::io::Write;
 use reqwest;
+use serde::Deserialize;
+use colored::*;
 // Add color constants
 const GREEN: &str = "\x1b[32m";
 const CYAN: &str = "\x1b[36m";
 const BRIGHT_CYAN: &str = "\x1b[96m";
 const RESET: &str = "\x1b[0m";
+const YELLOW: &str = "\x1b[33m";
+const BOLD: &str = "\x1b[1m";
 
 // Import the display module
 mod display;
 use display::display_models_table;
+
+// Add this struct to deserialize the model response
+#[derive(Deserialize)]
+struct AttachModelResponse {
+    name: String,
+    label: String,
+    greeting: String,
+}
 
 fn print_help(model_attached: bool) {
     println!("\n{CYAN}MCAI Chat Commands{RESET}");
@@ -21,18 +33,21 @@ fn print_help(model_attached: bool) {
         println!("{GREEN}mcai help{RESET} - Show this help message"); 
         println!("{GREEN}mcai clear{RESET} - Clear the screen");
         println!("{GREEN}mcai models{RESET} - Display available models");
+
     } else {
         println!("{GREEN}exit, bye, quit{RESET} - Exit the chat");
         println!("{GREEN}help{RESET} - Show this help message");
         println!("{GREEN}clear{RESET} - Clear the screen");
         println!("{GREEN}models{RESET} - Display available models");
+        println!("{GREEN}attach <model_number>{RESET} - Attach a model by its number");
     }
     println!();
 }
 
 pub async fn chat_loop(settings: &Settings) -> Result<(), Box<dyn Error + Send + Sync>> {
     println!("Starting chat session");
-    let model_attached = false; // This should be set based on model attachment status
+    let mut model_attached = false;
+    let mut current_model_label: Option<String> = None;
     print_help(model_attached);
 
     let mut rl = DefaultEditor::new()?;
@@ -40,7 +55,7 @@ pub async fn chat_loop(settings: &Settings) -> Result<(), Box<dyn Error + Send +
     let server_url = format!("http://{}:{}", settings.server.host, settings.server.port);
 
     loop {
-        let readline = rl.readline("> ");
+        let readline = rl.readline(if model_attached { "model > " } else { "> " });
         match readline {
             Ok(input) => {
                 // Process exit commands
@@ -88,15 +103,84 @@ pub async fn chat_loop(settings: &Settings) -> Result<(), Box<dyn Error + Send +
                             }
                         }
                     },
+                    // Attach model (only when no model is attached)
+                    cmd if !model_attached && cmd.starts_with("attach ") => {
+                        let parts: Vec<&str> = cmd.split_whitespace().collect();
+                        if parts.len() != 2 {
+                            println!("Usage: attach <model_number>");
+                            continue;
+                        }
+                        
+                        if let Ok(model_number) = parts[1].parse::<usize>() {
+                            
+                            let request_body = serde_json::json!({
+                                "model_number": model_number
+                            });
+                            
+                            match client.post(format!("{}/attach", server_url))
+                                .json(&request_body)
+                                .send()
+                                .await {
+                                Ok(response) => {
+                                    match response.text().await {
+                                        Ok(text) => {
+                                            if let Ok(json) = serde_json::from_str::<serde_json::Value>(&text) {
+                                                if json.get("status").and_then(|s| s.as_str()) == Some("success") {
+                                                    if let Ok(model_data) = serde_json::from_value::<AttachModelResponse>(
+                                                        json.get("data").unwrap_or(&serde_json::Value::Null).clone()
+                                                    ) {
+                                                        
+                                                        // Print the model greeting
+                                                        println!("{BOLD}[{} ]{RESET} {}", 
+                                                            model_data.label.yellow(), 
+                                                            model_data.greeting
+                                                        );
+                                                        
+                                                        model_attached = true;
+                                                        // Store the model label for future messages
+                                                        current_model_label = Some(model_data.label);
+                                                    }
+                                                } else if let Some(message) = json.get("message").and_then(|m| m.as_str()) {
+                                                    println!("Error: {}", message);
+                                                } else {
+                                                    println!("Failed to attach model");
+                                                }
+                                            } else {
+                                                println!("Failed to parse response");
+                                            }
+                                        },
+                                        Err(e) => {
+                                            println!("Error reading response: {}", e);
+                                        }
+                                    }
+                                },
+                                Err(e) => {
+                                    println!("Error sending request: {}", e);
+                                }
+                            }
+                        } else {
+                            println!("Invalid model number: {}", parts[1]);
+                        }
+                    },
                     _ => {
                         // Normal chat input processing
                         if input.trim().is_empty() {
-                            // Skip processing for empty lines, but don't add any newlines
-                            // This ensures the prompt appears on the next line without skipping
+                            // Skip processing for empty lines
+                            continue;
+                        }
+                        
+                        if model_attached {
+                            if let Some(label) = &current_model_label {
+                                // TODO: Send the input to the model and get response
+                                // For now, just echo the input as an example
+                                println!("{BOLD}[{} ]{RESET} Your message: {}", label.yellow(), input);
+                                
+                                // This is where you'd normally send the message to the model and get a response
+                                // When you get the response, format it like this:
+                                // println!("{BOLD}[{} ]{RESET} {}", label.yellow(), response);
+                            }
                         } else {
-                            // Process non-empty input
-                            print!("{}\n", input);
-                            std::io::stdout().flush().unwrap();
+                            println!("No model attached. Use 'attach <model_number>' to start a chat.");
                         }
                     }
                 }

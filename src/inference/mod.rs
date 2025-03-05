@@ -23,15 +23,16 @@ use std::path::PathBuf;
 use std::fs;
 use tracing::{info, error, debug};
 use crate::gguf::{GGUFReader, GGUFError, is_gguf_file};  // Add GGUF parser and standalone function
-use crate::model::Model;
-use comfy_table::{Table, Cell, ContentArrangement};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use chrono::{DateTime, Utc, serde::ts_seconds};
 use std::thread;
 use std::time::Duration;
 use indicatif::{ProgressBar, ProgressStyle};
-use colored::*;
+
+// Add the model module
+pub mod model;
+use model::Model;
 
 /// Represents a model entry in the registry file.
 ///
@@ -59,10 +60,6 @@ pub struct ModelEntry {
     /// When the model was added to the registry
     #[serde(with = "ts_seconds")]
     pub added_date: DateTime<Utc>,
-    /// When the model was last used (optional)
-    #[serde(default)]
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub last_used: Option<DateTime<Utc>>,
 }
 
 /// Detailed model information for display and API responses.
@@ -270,7 +267,6 @@ impl InferenceEngine {
                                 quantization: quant.to_string(),
                                 tensor_count: reader.tensor_count,
                                 added_date: Utc::now(),
-                                last_used: None,
                             };
 
                             // Add to registry
@@ -382,5 +378,75 @@ impl InferenceEngine {
         
         // Now return the result
         scan_result
+    }
+
+    /// Attaches a model by its number.
+    ///
+    /// This method finds a model by its number, loads it, and sets it as the current model.
+    ///
+    /// # Arguments
+    ///
+    /// * `model_number` - The number of the model to attach
+    ///
+    /// # Returns
+    ///
+    /// A Result containing the attached model details or an error
+    pub fn attach_model(&self, model_number: usize) -> Result<ModelDetails, Box<dyn Error + Send + Sync>> {
+        // Get a read lock on the registry
+        let registry = self.registry.read().map_err(|e| e.to_string())?;
+
+        // Find the model with the given number
+        let model_entry = registry.values()
+            .find(|entry| entry.number == Some(model_number))
+            .ok_or_else(|| format!("Model with number {} not found", model_number))?
+            .clone();
+        
+        // Create the full path to the model file
+        let model_path = self.models_dir.join(&model_entry.filename);
+
+        // Load the model
+        let model = Model::load(
+            model_entry.label.clone(),
+            model_entry.name.clone(),
+            model_entry.size.clone(),
+            model_entry.architecture.clone(),
+            model_entry.quantization.clone(),
+            model_path.clone(),
+        )?;
+  
+        // Set the current model
+        {
+            let mut current_model = self.current_model.write().map_err(|e| e.to_string())?;
+            *current_model = Some(model_entry.label.clone());
+        }
+        
+        // Set the loaded model
+        {
+            let mut loaded_model = self.loaded_model.write().map_err(|e| e.to_string())?;
+            *loaded_model = Some(model);
+        }
+        
+        // Return the model details
+        Ok(ModelDetails {
+            number: model_entry.number,
+            label: model_entry.label,
+            name: model_entry.name,
+            size: model_entry.size,
+            architecture: model_entry.architecture,
+            quantization: model_entry.quantization,
+            added_date: model_entry.added_date,
+            tensor_count: model_entry.tensor_count,
+            filename: model_entry.filename,
+            directory: self.models_dir.to_string_lossy().to_string(),
+        })
+    }
+
+    /// Checks if a model is currently attached.
+    ///
+    /// # Returns
+    ///
+    /// A boolean indicating whether a model is attached
+    pub fn is_model_attached(&self) -> bool {
+        self.current_model.read().map(|m| m.is_some()).unwrap_or(false)
     }
 }

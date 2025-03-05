@@ -38,7 +38,6 @@ pub fn display_models_table(json_response: &str) {
                     // Use dynamic content arrangement
                     .set_content_arrangement(ContentArrangement::Dynamic);
 
-                let mut rows_added = 0;
                 for (i, model) in data_array.iter().enumerate() {
                     // Get all the required fields
                     let label = model.get("label").and_then(|v| v.as_str());
@@ -78,13 +77,12 @@ pub fn display_models_table(json_response: &str) {
                             Cell::new(tensors.to_string()).fg(comfy_table::Color::White).set_alignment(CellAlignment::Right),
                             Cell::new(added).fg(comfy_table::Color::DarkGrey),
                         ]);
-                        rows_added += 1;
                     }
                 }
 
                 println!("\n{}", table);
                 println!("{}", "=".repeat(100).bright_black());
-                println!("{}", format!("Total models: {}", model_count).bright_green());
+                println!("{}", format!("Total models: {}\n", model_count).bright_green());
             } else {
                 println!("{}", "No models found in registry".yellow());
             }
