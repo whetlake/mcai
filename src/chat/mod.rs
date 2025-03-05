@@ -55,7 +55,7 @@ pub async fn chat_loop(settings: &Settings) -> Result<(), Box<dyn Error + Send +
     let server_url = format!("http://{}:{}", settings.server.host, settings.server.port);
 
     loop {
-        let readline = rl.readline(if model_attached { "model > " } else { "> " });
+        let readline = rl.readline("> ");
         match readline {
             Ok(input) => {
                 // Process exit commands
@@ -131,9 +131,9 @@ pub async fn chat_loop(settings: &Settings) -> Result<(), Box<dyn Error + Send +
                                                     ) {
                                                         
                                                         // Print the model greeting
-                                                        println!("{BOLD}[{} ]{RESET} {}", 
+                                                        println!("{BOLD}[{}]{RESET} {}", 
                                                             model_data.label.yellow(), 
-                                                            model_data.greeting
+                                                            model_data.greeting.bright_cyan()
                                                         );
                                                         
                                                         model_attached = true;
@@ -173,7 +173,7 @@ pub async fn chat_loop(settings: &Settings) -> Result<(), Box<dyn Error + Send +
                             if let Some(label) = &current_model_label {
                                 // TODO: Send the input to the model and get response
                                 // For now, just echo the input as an example
-                                println!("{BOLD}[{} ]{RESET} Your message: {}", label.yellow(), input);
+                                println!("{BOLD}[{}]{RESET} {}", label.yellow(), input.bright_cyan());
                                 
                                 // This is where you'd normally send the message to the model and get a response
                                 // When you get the response, format it like this:

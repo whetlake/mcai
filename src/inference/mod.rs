@@ -323,8 +323,6 @@ impl InferenceEngine {
         pb.disable_steady_tick();
         pb.finish_with_message(status.clone());
 
-        println!("Siin olen");
-
         if new_models > 0 {
             // Serialize and save the registry directly while we have the write lock
             let registry_path = self.models_dir.join("model_registry.json");
@@ -333,7 +331,6 @@ impl InferenceEngine {
             println!("Registry saved with {} new models", new_models);
         }
 
-        println!("Seal olen!");
         Ok(())
     }
 
