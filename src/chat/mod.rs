@@ -33,6 +33,7 @@ fn print_help(model_attached: bool) {
         println!("{GREEN}mcai help{RESET} - Show this help message"); 
         println!("{GREEN}mcai clear{RESET} - Clear the screen");
         println!("{GREEN}mcai models{RESET} - Display available models");
+        println!("{GREEN}mcai drop{RESET} - Detach the current model");
 
     } else {
         println!("{GREEN}exit, bye, quit{RESET} - Exit the chat");
@@ -100,6 +101,36 @@ pub async fn chat_loop(settings: &Settings) -> Result<(), Box<dyn Error + Send +
                             },
                             Err(e) => {
                                 println!("Error requesting models: {}", e);
+                            }
+                        }
+                    },
+                    // Drop model (only when a model is attached)
+                    cmd if model_attached && cmd == "mcai drop" => {
+                        match client.post(format!("{}/api/v1/drop", server_url)).send().await {
+                            Ok(response) => {
+                                match response.text().await {
+                                    Ok(text) => {
+                                        if let Ok(json) = serde_json::from_str::<serde_json::Value>(&text) {
+                                            if json.get("status").and_then(|s| s.as_str()) == Some("success") {
+                                                println!("Model detached successfully");
+                                                model_attached = false;
+                                                current_model_label = None;
+                                            } else if let Some(message) = json.get("message").and_then(|m| m.as_str()) {
+                                                println!("Error: {}", message);
+                                            } else {
+                                                println!("Failed to detach model");
+                                            }
+                                        } else {
+                                            println!("Failed to parse response");
+                                        }
+                                    },
+                                    Err(e) => {
+                                        println!("Error reading response: {}", e);
+                                    }
+                                }
+                            },
+                            Err(e) => {
+                                println!("Error sending request: {}", e);
                             }
                         }
                     },

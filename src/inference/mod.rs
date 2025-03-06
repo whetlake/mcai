@@ -478,4 +478,34 @@ impl InferenceEngine {
         // Process the input and generate a response
         context.process_input(prompt)
     }
+
+    /// Detaches the current model and clears all related state.
+    ///
+    /// # Returns
+    ///
+    /// A Result indicating success or failure of the operation
+    pub fn drop_model(&self) -> Result<(), Box<dyn Error + Send + Sync>> {
+        // Check if a model is attached
+        if !self.is_model_attached() {
+            return Err("No model attached".into());
+        }
+
+        // Clear the current model and inference context
+        {
+            let mut current_model = self.current_model.write().map_err(|e| e.to_string())?;
+            *current_model = None;
+        }
+        
+        {
+            let mut loaded_model = self.loaded_model.write().map_err(|e| e.to_string())?;
+            *loaded_model = None;
+        }
+        
+        {
+            let mut inference_context = self.inference_context.write().map_err(|e| e.to_string())?;
+            *inference_context = None;
+        }
+
+        Ok(())
+    }
 }
