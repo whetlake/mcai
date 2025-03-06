@@ -86,7 +86,7 @@ pub async fn chat_loop(settings: &Settings) -> Result<(), Box<dyn Error + Send +
                     },
                     // Display models
                     cmd if (model_attached && cmd == "mcai models") || (!model_attached && cmd == "models") => {
-                        match client.get(format!("{}/models", server_url)).send().await {
+                        match client.get(format!("{}/api/v1/models", server_url)).send().await {
                             Ok(response) => {
                                 match response.text().await {
                                     Ok(text) => {
@@ -117,7 +117,7 @@ pub async fn chat_loop(settings: &Settings) -> Result<(), Box<dyn Error + Send +
                                 "model_number": model_number
                             });
                             
-                            match client.post(format!("{}/attach", server_url))
+                            match client.post(format!("{}/api/v1/attach", server_url))
                                 .json(&request_body)
                                 .send()
                                 .await {
@@ -170,14 +170,44 @@ pub async fn chat_loop(settings: &Settings) -> Result<(), Box<dyn Error + Send +
                         }
                         
                         if model_attached {
-                            if let Some(label) = &current_model_label {
-                                // TODO: Send the input to the model and get response
-                                // For now, just echo the input as an example
-                                println!("{BOLD}[{}]{RESET} {}", label.yellow(), input.bright_cyan());
+                            if let Some(label) = &current_model_label {                               
+                                // Send the message to the inference engine
+                                let url = format!("http://{}:{}/api/v1/generate", settings.server.host, settings.server.port);
+                                let client = reqwest::Client::new();
+                                let request_body = serde_json::json!({
+                                    "prompt": input
+                                });
                                 
-                                // This is where you'd normally send the message to the model and get a response
-                                // When you get the response, format it like this:
-                                // println!("{BOLD}[{} ]{RESET} {}", label.yellow(), response);
+                                match client.post(&url).json(&request_body).send().await {
+                                    Ok(response) => {
+                                        match response.text().await {
+                                            Ok(text) => {
+                                                if let Ok(json) = serde_json::from_str::<serde_json::Value>(&text) {
+                                                    if let Some(data) = json.get("data") {
+                                                        if let Some(response_text) = data.get("response").and_then(|r| r.as_str()) {
+                                                            // Print the model's response
+                                                            println!("{BOLD}[{}]{RESET} {}", label.yellow(), response_text.bright_cyan());
+                                                        } else {
+                                                            println!("Error: Invalid response format");
+                                                        }
+                                                    } else if let Some(message) = json.get("message").and_then(|m| m.as_str()) {
+                                                        println!("Error: {}", message);
+                                                    } else {
+                                                        println!("Failed to parse response");
+                                                    }
+                                                } else {
+                                                    println!("Failed to parse response as JSON");
+                                                }
+                                            },
+                                            Err(e) => {
+                                                println!("Error reading response: {}", e);
+                                            }
+                                        }
+                                    },
+                                    Err(e) => {
+                                        println!("Error sending request: {}", e);
+                                    }
+                                }
                             }
                         } else {
                             println!("No model attached. Use 'attach <model_number>' to start a chat.");

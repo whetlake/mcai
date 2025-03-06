@@ -6,7 +6,6 @@ use crate::inference::InferenceEngine;
 use crate::inference::{ModelDetails, ModelEntry};
 use tracing::{info, warn, error};
 use std::error::Error;
-use std::collections::HashMap;
 
 #[derive(Deserialize, Serialize, Clone)]
 pub struct GenerateRequest {
@@ -71,8 +70,9 @@ impl ApiServer {
         let app_state = Arc::clone(&self.engine);
         
         let app = Router::new()
-            .route("/models", get(list_models))
-            .route("/attach", post(attach_model))
+            .route("/api/v1/models", get(list_models))
+            .route("/api/v1/attach", post(attach_model))
+            .route("/api/v1/generate", post(generate))
             .with_state(app_state);
 
         info!("Starting server on {}:{}", self.host, self.port);
@@ -156,6 +156,29 @@ async fn attach_model(
                 status: "error".to_string(),
                 data: None,
                 message: Some(format!("Failed to attach model: {}", e)),
+            })
+        }
+    }
+}
+
+/// Handles the generate endpoint for text generation
+async fn generate(
+    State(engine): State<Arc<InferenceEngine>>,
+    Json(request): Json<GenerateRequest>
+) -> impl IntoResponse {
+    match engine.generate(&request.prompt) {
+        Ok(response) => {
+            Json(ApiResponse {
+                status: "success".to_string(),
+                data: Some(GenerateResponse { response }),
+                message: None,
+            })
+        },
+        Err(e) => {
+            Json(ApiResponse {
+                status: "error".to_string(),
+                data: None,
+                message: Some(e.to_string()),
             })
         }
     }

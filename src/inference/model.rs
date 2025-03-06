@@ -1,12 +1,15 @@
 use std::path::PathBuf;
 use std::error::Error;
 use chrono::{DateTime, Utc};
+use memmap2::Mmap;
+use std::fs::File;
+use crate::gguf::{GGUFReader, TensorInfo};
+use std::fmt;
 
 /// Represents a loaded model in memory.
 ///
 /// This struct contains the runtime state of a loaded model,
 /// including its metadata and any resources needed for inference.
-#[derive(Debug)]
 pub struct Model {
     /// Unique identifier for the model
     pub label: String,
@@ -22,6 +25,49 @@ pub struct Model {
     pub path: PathBuf,
     /// When the model was loaded
     pub loaded_at: DateTime<Utc>,
+    /// Memory-mapped data of the model file
+    data: Mmap,
+    /// GGUF reader for accessing model metadata and tensors
+    gguf_reader: GGUFReader,
+}
+
+impl fmt::Debug for Model {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Model")
+            .field("label", &self.label)
+            .field("name", &self.name)
+            .field("size", &self.size)
+            .field("architecture", &self.architecture)
+            .field("quantization", &self.quantization)
+            .field("path", &self.path)
+            .field("loaded_at", &self.loaded_at)
+            .field("data_len", &self.data.len())
+            .field("tensor_count", &self.gguf_reader.tensor_count)
+            .finish()
+    }
+}
+
+impl Clone for Model {
+    fn clone(&self) -> Self {
+        // Create a new memory mapping of the same file
+        let file = File::open(&self.path).expect("Failed to open model file for cloning");
+        let data = unsafe { Mmap::map(&file).expect("Failed to create memory mapping for clone") };
+        
+        // Create a new GGUF reader
+        let gguf_reader = GGUFReader::new(&self.path).expect("Failed to create GGUF reader for clone");
+        
+        Self {
+            label: self.label.clone(),
+            name: self.name.clone(),
+            size: self.size.clone(),
+            architecture: self.architecture.clone(),
+            quantization: self.quantization.clone(),
+            path: self.path.clone(),
+            loaded_at: self.loaded_at,
+            data,
+            gguf_reader,
+        }
+    }
 }
 
 impl Model {
@@ -35,6 +81,8 @@ impl Model {
     /// * `architecture` - Model architecture
     /// * `quantization` - Quantization format
     /// * `path` - Path to the model file
+    /// * `data` - Memory-mapped data of the model file
+    /// * `gguf_reader` - GGUF reader for accessing model metadata and tensors
     pub fn new(
         label: String,
         name: String,
@@ -42,6 +90,8 @@ impl Model {
         architecture: String,
         quantization: String,
         path: PathBuf,
+        data: Mmap,
+        gguf_reader: GGUFReader,
     ) -> Self {
         Self {
             label,
@@ -51,6 +101,8 @@ impl Model {
             quantization,
             path,
             loaded_at: Utc::now(),
+            data,
+            gguf_reader,
         }
     }
 
@@ -58,8 +110,12 @@ impl Model {
     ///
     /// # Arguments
     ///
+    /// * `label` - Unique identifier for the model
+    /// * `name` - Human-readable name
+    /// * `size` - Size category
+    /// * `architecture` - Model architecture
+    /// * `quantization` - Quantization format
     /// * `path` - Path to the model file
-    /// * `metadata` - Model metadata
     ///
     /// # Returns
     ///
@@ -72,8 +128,14 @@ impl Model {
         quantization: String,
         path: PathBuf,
     ) -> Result<Self, Box<dyn Error + Send + Sync>> {
-        // In a real implementation, this would load the model into memory
-        // For now, we just create a new Model instance
+        // Open the file and create a memory map
+        let file = File::open(&path)?;
+        let data = unsafe { Mmap::map(&file)? };
+        
+        // Create a GGUF reader for accessing model metadata and tensors
+        let gguf_reader = GGUFReader::new(&path)?;
+        
+        // Create and return the model instance
         Ok(Self::new(
             label,
             name,
@@ -81,6 +143,8 @@ impl Model {
             architecture,
             quantization,
             path,
+            data,
+            gguf_reader,
         ))
     }
 
@@ -93,7 +157,29 @@ impl Model {
         println!("Size: {}", self.size);
         println!("Architecture: {}", self.architecture);
         println!("Quantization: {}", self.quantization);
+        println!("Memory mapped size: {} bytes", self.data.len());
+        println!("Tensor count: {}", self.gguf_reader.tensor_count);
         println!("Status: Attached");
         println!();
+    }
+
+    /// Get reference to the memory-mapped data
+    pub fn data(&self) -> &[u8] {
+        &self.data
+    }
+    
+    /// Get the GGUF reader for accessing model metadata and tensors
+    pub fn gguf_reader(&self) -> &GGUFReader {
+        &self.gguf_reader
+    }
+    
+    /// Get a tensor by name
+    pub fn get_tensor_by_name(&self, name: &str) -> Option<&TensorInfo> {
+        self.gguf_reader.tensors.iter().find(|t| t.name == name)
+    }
+    
+    /// Get tensor data at the specified offset
+    pub fn get_tensor_data(&self, offset: u64, size: usize) -> &[u8] {
+        &self.data[offset as usize..offset as usize + size]
     }
 }

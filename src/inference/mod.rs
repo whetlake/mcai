@@ -29,10 +29,13 @@ use chrono::{DateTime, Utc, serde::ts_seconds};
 use std::thread;
 use std::time::Duration;
 use indicatif::{ProgressBar, ProgressStyle};
+use std::fmt;
 
 // Add the model module
 pub mod model;
+pub mod inference;
 use model::Model;
+use inference::InferenceContext;
 
 /// Represents a model entry in the registry file.
 ///
@@ -102,14 +105,10 @@ pub struct InferenceEngine {
     pub current_model: RwLock<Option<String>>,
     /// Currently loaded model data (if any)
     pub loaded_model: RwLock<Option<Model>>,
-    /// Models participating in discussion mode
-    pub discussion_models: RwLock<Vec<String>>,
-    /// Whether the engine is in discussion mode
-    pub in_discussion: RwLock<bool>,
+    /// Inference context for the current model
+    pub inference_context: RwLock<Option<InferenceContext>>,
     /// Directory where model files are stored
     pub models_dir: PathBuf,
-    /// Index of available models (label, path)
-    pub model_index: RwLock<Vec<(String, PathBuf)>>,
     /// Registry of all available models and their metadata
     pub registry: RwLock<HashMap<String, ModelEntry>>,
 }
@@ -124,10 +123,8 @@ impl InferenceEngine {
         Self {
             current_model: RwLock::new(None),
             loaded_model: RwLock::new(None),
-            discussion_models: RwLock::new(Vec::new()),
-            in_discussion: RwLock::new(false),
+            inference_context: RwLock::new(None),
             models_dir,
-            model_index: RwLock::new(Vec::new()),
             registry: RwLock::new(HashMap::new()),
         }
     }
@@ -337,7 +334,7 @@ impl InferenceEngine {
     /// Scans for new models and updates the registry.
     ///
     /// This is a convenience method that combines loading the registry
-    /// and scanning for new models.
+    /// and scanning for new models in the folder.
     pub fn scan_models(&self) -> Result<(), Box<dyn Error + Send + Sync>> {
         // Load existing registry first
         self.load_or_create_registry()?;
@@ -410,17 +407,26 @@ impl InferenceEngine {
             model_entry.quantization.clone(),
             model_path.clone(),
         )?;
-  
+        
         // Set the current model
         {
             let mut current_model = self.current_model.write().map_err(|e| e.to_string())?;
             *current_model = Some(model_entry.label.clone());
         }
         
+        // Create a clone of the model for the inference context
+        let model_clone = model.clone();
+        
         // Set the loaded model
         {
             let mut loaded_model = self.loaded_model.write().map_err(|e| e.to_string())?;
             *loaded_model = Some(model);
+        }
+        
+        // Create and set the inference context
+        {
+            let mut inference_context = self.inference_context.write().map_err(|e| e.to_string())?;
+            *inference_context = Some(InferenceContext::new(model_clone, 2048)); // Default context size of 2048 tokens
         }
         
         // Return the model details
@@ -445,5 +451,31 @@ impl InferenceEngine {
     /// A boolean indicating whether a model is attached
     pub fn is_model_attached(&self) -> bool {
         self.current_model.read().map(|m| m.is_some()).unwrap_or(false)
+    }
+
+    /// Generates text from the current model using the provided prompt.
+    ///
+    /// # Arguments
+    ///
+    /// * `prompt` - The input text to generate a response for
+    ///
+    /// # Returns
+    ///
+    /// A Result containing the generated text or an error
+    pub fn generate(&self, prompt: &str) -> Result<String, Box<dyn Error + Send + Sync>> {
+        // Check if a model is attached
+        if !self.is_model_attached() {
+            return Err("No model attached".into());
+        }
+        
+        // Get a reference to the inference context
+        let mut inference_context = self.inference_context.write().map_err(|e| e.to_string())?;
+        
+        // Check if we have an inference context
+        let context = inference_context.as_mut()
+            .ok_or_else(|| "No inference context available")?;
+        
+        // Process the input and generate a response
+        context.process_input(prompt)
     }
 }
