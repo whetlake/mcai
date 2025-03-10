@@ -1,6 +1,6 @@
 use std::error::Error;
 use std::fs::File;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::collections::BTreeMap;
 use byteorder::{LittleEndian, ReadBytesExt};
 use std::io::{Seek, SeekFrom, Read};
@@ -9,6 +9,7 @@ use super::types::{GGUFValue, GGUFError, GGUFValueType, TensorInfo};
 use crate::gguf::gguf_utils;
 use comfy_table::*;
 use tracing::{info, error, debug};
+use std::io::BufReader;
 
 /// A reader for GGUF (GPT-Generated Unified Format) model files.
 ///
@@ -23,6 +24,8 @@ use tracing::{info, error, debug};
 /// * `tensor_count` - Number of tensors in the model
 /// * `metadata` - Key-value pairs of metadata stored in the file
 /// * `tensors` - Information about all tensors in the model
+/// * `file_type` - File type from metadata (e.g., 15 for Q8_K)
+/// * `quantization_version` - Quantization version from metadata
 ///
 /// # Examples
 ///
@@ -33,11 +36,20 @@ use tracing::{info, error, debug};
 /// let model_name = reader.get_metadata_value("general.name")?;
 /// ```
 pub struct GGUFReader {
-    pub path: Box<Path>,
+    /// Path to the GGUF file
+    pub path: PathBuf,
+    /// Whether the file is a valid GGUF file
     pub is_valid_gguf: bool,
+    /// Number of tensors in the file
     pub tensor_count: u64,
+    /// Metadata key-value pairs
     pub metadata: BTreeMap<String, (String, GGUFValue)>,
+    /// Information about each tensor
     pub tensors: Vec<TensorInfo>,
+    /// File type from metadata (e.g., 15 for Q8_K)
+    pub file_type: i64,
+    /// Quantization version from metadata
+    pub quantization_version: i64,
 }
 
 /// The magic number that identifies GGUF files
@@ -101,13 +113,24 @@ impl GGUFReader {
         // Parse all metadata. This is necessary to update the model registry.
         let mut metadata: BTreeMap<String, (String, GGUFValue)> = BTreeMap::new();
         let mut actual_count = 0;
+        let mut file_type = 0i64;
+        let mut quantization_version = 0i64;
 
         // Read metadata items, but stop early if issues occur
         for i in 0..metadata_count {
             match read_metadata_kv(&mut file, version) {
                 Ok((key, type_str, value)) => {
-                    metadata.insert(key, (type_str, value));
+                    metadata.insert(key.clone(), (type_str, value.clone()));
                     actual_count += 1;
+                    if key == "general.file_type" {
+                        if let Some(v) = value.as_int() {
+                            file_type = v;
+                        }
+                    } else if key == "general.quantization_version" {
+                        if let Some(v) = value.as_int() {
+                            quantization_version = v;
+                        }
+                    }
                 },
                 Err(e) => {
                     error!("Reached end of metadata at index {} of reported {}: {}", 
@@ -123,11 +146,13 @@ impl GGUFReader {
         let tensors = read_tensor_info(&mut file, tensor_count, version)?;
         
         Ok(Self {
-            path: path_box,
+            path: path_box.to_path_buf(),
             is_valid_gguf: true,
             tensor_count,
             metadata,
             tensors,
+            file_type,
+            quantization_version,
         })
     }
 
@@ -240,7 +265,7 @@ impl GGUFReader {
             table.add_row(vec![
                 &tensor.name,
                 &dims_str,
-                tensor.type_string(),
+                &tensor.type_string(),
                 &offset_str,
             ]);
         }
@@ -396,7 +421,7 @@ fn read_tensor_info(file: &mut File, tensor_count: u64, version: u32) -> Result<
             name,
             n_dims,
             dims,
-            data_type,
+            data_type: data_type.into(),
             offset,
         });
     }

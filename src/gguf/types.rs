@@ -37,6 +37,19 @@ impl GGUFValue {
             }
         }
     }
+
+    /// Attempts to convert the value to an integer
+    ///
+    /// # Returns
+    /// Some(i64) if the value can be converted to an integer, None otherwise
+    pub fn as_int(&self) -> Option<i64> {
+        match self {
+            GGUFValue::Int(i) => Some(*i),
+            GGUFValue::Float(f) => Some(*f as i64),
+            GGUFValue::String(s) => s.parse().ok(),
+            _ => None,
+        }
+    }
 }
 
 // Add this impl to support better debug formatting for the GGUFValue enum
@@ -103,7 +116,144 @@ impl From<std::io::Error> for GGUFError {
     }
 }
 
-// Add back the Display implementation alongside Debug
+/// Value type identifiers from the GGUF format specification
+#[derive(Debug, Clone, Copy)]
+pub enum GGUFValueType {
+    // Basic data types
+    UINT8 = 0,
+    INT8 = 1,
+    UINT16 = 2,
+    INT16 = 3,
+    UINT32 = 4,
+    INT32 = 5,
+    FLOAT32 = 6,
+    BOOL = 7,
+    STRING = 8,
+    ARRAY = 9,
+    UINT64 = 10,
+    INT64 = 11,
+    
+    // Quantization formats (newer K-quants)
+    Q3_K_M = 12,
+    Q3_K_L = 13,
+    Q4_K_S = 14,
+    Q4_K_M = 15,
+    Q5_K_S = 16,
+    Q5_K_M = 17,
+    Q6_K = 18,
+    
+    // Quantization formats (older formats)
+    Q4_0 = 19,
+    Q4_1 = 20,
+    Q4_1_SOME_F16 = 21,
+    Q8_0 = 22,
+    Q5_0 = 23,
+    Q5_1 = 24,
+    Q2_K = 25,
+    Q3_K_S = 26,
+}
+
+impl GGUFValueType {
+    /// Convert the value type to a string representation
+    pub fn type_string(&self) -> String {
+        match self {
+            GGUFValueType::STRING => "String",
+            GGUFValueType::ARRAY => "Array",
+            GGUFValueType::BOOL => "Bool",
+            GGUFValueType::FLOAT32 => "Float32",
+            GGUFValueType::Q3_K_M => "Q3_K_M",
+            GGUFValueType::Q3_K_L => "Q3_K_L",
+            GGUFValueType::Q4_K_S => "Q4_K_S",
+            GGUFValueType::Q4_K_M => "Q4_K_M",
+            GGUFValueType::Q5_K_S => "Q5_K_S",
+            GGUFValueType::Q5_K_M => "Q5_K_M",
+            GGUFValueType::Q6_K => "Q6_K",
+            GGUFValueType::Q4_0 => "Q4_0",
+            GGUFValueType::Q4_1 => "Q4_1",
+            GGUFValueType::Q4_1_SOME_F16 => "Q4_1_SOME_F16",
+            GGUFValueType::Q8_0 => "Q8_0",
+            GGUFValueType::Q5_0 => "Q5_0",
+            GGUFValueType::Q5_1 => "Q5_1",
+            GGUFValueType::Q2_K => "Q2_K",
+            GGUFValueType::Q3_K_S => "Q3_K_S",
+            _ => "Int", // All other numeric types
+        }.to_string()
+    }
+}
+
+// Add From<u32> implementation for GGUFValueType
+impl From<u32> for GGUFValueType {
+    fn from(value: u32) -> Self {
+        match value {
+            0 => GGUFValueType::UINT8,
+            1 => GGUFValueType::INT8,
+            2 => GGUFValueType::UINT16,
+            3 => GGUFValueType::INT16,
+            4 => GGUFValueType::UINT32,
+            5 => GGUFValueType::INT32,
+            6 => GGUFValueType::FLOAT32,
+            7 => GGUFValueType::BOOL,
+            8 => GGUFValueType::STRING,
+            9 => GGUFValueType::ARRAY,
+            10 => GGUFValueType::UINT64,
+            11 => GGUFValueType::INT64,
+            12 => GGUFValueType::Q3_K_M,
+            13 => GGUFValueType::Q3_K_L,
+            14 => GGUFValueType::Q4_K_S,
+            15 => GGUFValueType::Q4_K_M,
+            16 => GGUFValueType::Q5_K_S,
+            17 => GGUFValueType::Q5_K_M,
+            18 => GGUFValueType::Q6_K,
+            19 => GGUFValueType::Q4_0,
+            20 => GGUFValueType::Q4_1,
+            21 => GGUFValueType::Q4_1_SOME_F16,
+            22 => GGUFValueType::Q8_0,
+            23 => GGUFValueType::Q5_0,
+            24 => GGUFValueType::Q5_1,
+            25 => GGUFValueType::Q2_K,
+            26 => GGUFValueType::Q3_K_S,
+            _ => panic!("Invalid GGUF value type: {}", value),
+        }
+    }
+}
+
+/// Information about a tensor in the GGUF file
+#[derive(Debug, Clone)]
+pub struct TensorInfo {
+    /// Name/label of the tensor
+    pub name: String,
+    /// Number of dimensions
+    pub n_dims: u32,
+    /// Size of each dimension
+    pub dims: Vec<u64>,
+    /// Data type of the tensor
+    pub data_type: GGUFValueType,
+    /// Offset in the file where tensor data begins
+    pub offset: u64,
+}
+
+impl TensorInfo {
+    /// Returns a human-readable string representation of the tensor's data type.
+    pub fn type_string(&self) -> String {
+        self.data_type.type_string()
+    }
+}
+
+impl fmt::Display for TensorInfo {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "{} [{}]", self.name, self.dims.iter()
+            .map(|d| d.to_string())
+            .collect::<Vec<_>>()
+            .join(" × "))
+    }
+}
+
+impl fmt::Display for GGUFValueType {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "{}", self.type_string())
+    }
+}
+
 impl fmt::Display for GGUFValue {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
@@ -128,120 +278,5 @@ impl fmt::Display for GGUFValue {
                 write!(f, " ... out of {}]", total)
             }
         }
-    }
-}
-
-/// Value type identifiers from the GGUF format specification
-#[derive(Debug, Clone, Copy)]
-pub enum GGUFValueType {
-    UINT8 = 0,
-    INT8 = 1,
-    UINT16 = 2,
-    INT16 = 3,
-    UINT32 = 4,
-    INT32 = 5,
-    FLOAT32 = 6,
-    BOOL = 7,
-    STRING = 8,
-    ARRAY = 9,
-    UINT64 = 10,
-    INT64 = 11,
-    FLOAT64 = 12,
-}
-
-impl GGUFValueType {
-    /// Convert the value type to a string representation
-    pub fn type_string(&self) -> String {
-        match self {
-            GGUFValueType::STRING => "String",
-            GGUFValueType::ARRAY => "Array",
-            GGUFValueType::BOOL => "Bool",
-            GGUFValueType::FLOAT32 | GGUFValueType::FLOAT64 => "Float",
-            _ => "Int", // All other numeric types
-        }.to_string()
-    }
-}
-
-// Add From<u32> implementation for GGUFValueType
-impl From<u32> for GGUFValueType {
-    fn from(value: u32) -> Self {
-        match value {
-            0 => GGUFValueType::UINT8,
-            1 => GGUFValueType::INT8,
-            2 => GGUFValueType::UINT16,
-            3 => GGUFValueType::INT16,
-            4 => GGUFValueType::UINT32,
-            5 => GGUFValueType::INT32,
-            6 => GGUFValueType::FLOAT32,
-            7 => GGUFValueType::BOOL,
-            8 => GGUFValueType::STRING,
-            9 => GGUFValueType::ARRAY,
-            10 => GGUFValueType::UINT64,
-            11 => GGUFValueType::INT64,
-            12 => GGUFValueType::FLOAT64,
-            _ => panic!("Invalid GGUF value type: {}", value),
-        }
-    }
-}
-
-/// Information about a tensor in the GGUF file
-#[derive(Debug, Clone)]
-pub struct TensorInfo {
-    /// Name/label of the tensor
-    pub name: String,
-    /// Number of dimensions
-    pub n_dims: u32,
-    /// Size of each dimension
-    pub dims: Vec<u64>,
-    /// Data type of the tensor
-    pub data_type: u32,
-    /// Offset in the file where tensor data begins
-    pub offset: u64,
-}
-
-impl TensorInfo {
-    /// Returns a human-readable string representation of the tensor's data type.
-    ///
-    /// This method maps the numeric data type to its corresponding string representation,
-    /// including all supported GGUF data types and quantization formats.
-    ///
-    /// # Returns
-    ///
-    /// A string representing the data type, or "UNKNOWN" if the type is not recognized.
-    pub fn type_string(&self) -> &'static str {
-        match self.data_type {
-            0 => "UINT8",
-            1 => "INT8",
-            2 => "UINT16",
-            3 => "INT16",
-            4 => "UINT32",
-            5 => "INT32",
-            6 => "FLOAT32",
-            7 => "BOOL",
-            8 => "STRING",
-            9 => "ARRAY",
-            10 => "UINT64",
-            11 => "INT64",
-            12 => "FLOAT64",
-            13 => "Q4_K",    // Quantized 4-bit
-            14 => "Q5_K",    // Quantized 5-bit
-            15 => "Q8_K",    // Quantized 8-bit
-            16 => "Q4_0",    // Quantized 4-bit (old format)
-            17 => "Q4_1",    // Quantized 4-bit (old format)
-            18 => "Q5_0",    // Quantized 5-bit (old format)
-            19 => "Q5_1",    // Quantized 5-bit (old format)
-            20 => "Q8_0",    // Quantized 8-bit (old format)
-            21 => "Q8_1",    // Quantized 8-bit (old format)
-            _ => "UNKNOWN",
-        }
-    }
-}
-
-impl fmt::Display for TensorInfo {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "{} [{}]", self.name, self.dims.iter()
-            .map(|d| d.to_string())
-            .collect::<Vec<_>>()
-            .join(" × "))
     }
 }

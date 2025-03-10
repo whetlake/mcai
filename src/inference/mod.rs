@@ -31,11 +31,15 @@ use std::time::Duration;
 use indicatif::{ProgressBar, ProgressStyle};
 use std::fmt;
 
-// Add the model module
+// Declare submodules
 pub mod model;
 pub mod inference;
-use model::Model;
-use inference::InferenceContext;
+pub mod tokenizer;
+
+// Re-export types for external use
+pub use model::Model;
+pub use inference::InferenceContext;
+pub use tokenizer::Tokenizer;
 
 /// Represents a model entry in the registry file.
 ///
@@ -58,6 +62,10 @@ pub struct ModelEntry {
     pub architecture: String,
     /// Quantization format (e.g., "Q4_K_M", "Q5_K_M")
     pub quantization: String,
+    /// File type from GGUF metadata (e.g., 15 for Q8_K)
+    pub file_type: i64,
+    /// Quantization version from GGUF metadata
+    pub quantization_version: i64,
     /// Number of tensors in the model
     pub tensor_count: u64,
     /// When the model was added to the registry
@@ -262,6 +270,8 @@ impl InferenceEngine {
                                 size: size.to_string(),
                                 architecture: arch.to_string(),
                                 quantization: quant.to_string(),
+                                file_type: reader.file_type,
+                                quantization_version: reader.quantization_version,
                                 tensor_count: reader.tensor_count,
                                 added_date: Utc::now(),
                             };
