@@ -5,6 +5,7 @@ use memmap2::Mmap;
 use std::fs::File;
 use crate::gguf::{GGUFReader, TensorInfo, GGUFValueType};
 use std::fmt;
+use tracing;
 
 /// Represents a loaded model in memory.
 ///
@@ -177,10 +178,8 @@ impl Model {
     ///
     /// A Result indicating whether the model is valid and compatible
     pub fn validate(&self) -> Result<(), Box<dyn Error + Send + Sync>> {
-        println!("Validating model...");
+        tracing::info!("Validating model...");
 
-        self.gguf_reader.print_metadata_table();
-        
         // 1. Check required metadata
         let architecture = self.architecture.to_lowercase();
         
@@ -223,6 +222,7 @@ impl Model {
         }
 
         if !found_metadata {
+            tracing::error!("Missing required metadata for architecture: {}", self.architecture);
             return Err(format!(
                 "Missing required metadata for architecture: {}. Need at least one of: {:?}",
                 self.architecture, required_metadata
@@ -231,13 +231,8 @@ impl Model {
 
         // 2. Validate memory map
         if self.data.is_empty() {
+            tracing::error!("Memory map is empty");
             return Err("Memory map is empty".into());
-        }
-
-        // Debug: Print metadata table
-        println!("\nModel Metadata:");
-        for (key, (type_str, value)) in &self.gguf_reader.metadata {
-            println!("  {}: {:?} (type: {})", key, value, type_str);
         }
 
         // 3. Check tensor data accessibility
@@ -250,84 +245,68 @@ impl Model {
         // Convert file_type to GGUFValueType
         let file_type_enum = GGUFValueType::from(file_type as u32);
         
-        println!("\nValidating tensor data accessibility:");
-        println!("  Memory map size: {} bytes", self.data.len());
-        println!("  File type: {} ({})", file_type, file_type_enum.type_string());
-        println!("  Total tensors: {}", self.gguf_reader.tensors.len());
+        tracing::info!("Validating tensor data accessibility for {} tensors...", self.gguf_reader.tensors.len());
 
         for tensor in &self.gguf_reader.tensors {
             let tensor_size = tensor.dims.iter().product::<u64>() as usize;
-            println!("\n  Tensor: {}", tensor.name);
-            println!("    Type: {} ({} elements)", tensor.type_string(), tensor_size);
-            println!("    Dimensions: {:?}", tensor.dims);
             
             let bytes_needed = match GGUFValueType::from(tensor.data_type) {
                 GGUFValueType::Q3_K_M | GGUFValueType::Q3_K_L | GGUFValueType::Q3_K_S => {
-                    // Q3_K uses 3 bits per value plus 2 bytes per block
-                    let block_size = 32; // Q3_K block size
+                    let block_size = 32;
                     let total_elements = tensor.dims.iter().map(|&d| d as i64).product::<i64>();
                     let blocks = (total_elements + block_size - 1) / block_size;
                     (blocks * (block_size * 3 / 8 + 2)) as usize
                 },
                 GGUFValueType::Q4_K_M | GGUFValueType::Q4_K_S => {
-                    // Q4_K uses 4 bits per value plus 2 bytes per block
-                    let block_size = 32; // Q4_K block size
+                    let block_size = 32;
                     let total_elements = tensor.dims.iter().map(|&d| d as i64).product::<i64>();
                     let blocks = (total_elements + block_size - 1) / block_size;
                     (blocks * (block_size * 4 / 8 + 2)) as usize
                 },
                 GGUFValueType::Q5_K_M | GGUFValueType::Q5_K_S => {
-                    // Q5_K uses 5 bits per value plus 2 bytes per block
-                    let block_size = 32; // Q5_K block size
+                    let block_size = 32;
                     let total_elements = tensor.dims.iter().map(|&d| d as i64).product::<i64>();
                     let blocks = (total_elements + block_size - 1) / block_size;
                     (blocks * (block_size * 5 / 8 + 2)) as usize
                 },
                 GGUFValueType::Q6_K => {
-                    // Q6_K uses 6 bits per value plus 2 bytes per block
-                    let block_size = 32; // Q6_K block size
+                    let block_size = 32;
                     let total_elements = tensor.dims.iter().map(|&d| d as i64).product::<i64>();
                     let blocks = (total_elements + block_size - 1) / block_size;
                     (blocks * (block_size * 6 / 8 + 2)) as usize
                 },
                 GGUFValueType::Q2_K => {
-                    // Q2_K uses 2 bits per value plus 2 bytes per block
-                    let block_size = 32; // Q2_K block size
+                    let block_size = 32;
                     let total_elements = tensor.dims.iter().map(|&d| d as i64).product::<i64>();
                     let blocks = (total_elements + block_size - 1) / block_size;
                     (blocks * (block_size * 2 / 8 + 2)) as usize
                 },
                 GGUFValueType::Q4_0 => {
-                    // Q4_0 uses 4 bits per value plus 1 byte per block
-                    let block_size = 32; // Q4_0 block size
+                    let block_size = 32;
                     let total_elements = tensor.dims.iter().map(|&d| d as i64).product::<i64>();
                     let blocks = (total_elements + block_size - 1) / block_size;
                     (blocks * (block_size * 4 / 8 + 1)) as usize
                 },
                 GGUFValueType::Q4_1 => {
-                    // Q4_1 uses 4 bits per value plus 2 bytes per block
-                    let block_size = 32; // Q4_1 block size
+                    let block_size = 32;
                     let total_elements = tensor.dims.iter().map(|&d| d as i64).product::<i64>();
                     let blocks = (total_elements + block_size - 1) / block_size;
                     (blocks * (block_size * 4 / 8 + 2)) as usize
                 },
                 GGUFValueType::Q5_0 => {
-                    // Q5_0 uses 5 bits per value plus 1 byte per block
-                    let block_size = 32; // Q5_0 block size
+                    let block_size = 32;
                     let total_elements = tensor.dims.iter().map(|&d| d as i64).product::<i64>();
                     let blocks = (total_elements + block_size - 1) / block_size;
                     (blocks * (block_size * 5 / 8 + 1)) as usize
                 },
                 GGUFValueType::Q5_1 => {
-                    // Q5_1 uses 5 bits per value plus 2 bytes per block
-                    let block_size = 32; // Q5_1 block size
+                    let block_size = 32;
                     let total_elements = tensor.dims.iter().map(|&d| d as i64).product::<i64>();
                     let blocks = (total_elements + block_size - 1) / block_size;
                     (blocks * (block_size * 5 / 8 + 2)) as usize
                 },
                 GGUFValueType::Q8_0 => {
-                    // Q8_0 uses 8 bits per value plus 1 byte per block
-                    let block_size = 32; // Q8_0 block size
+                    let block_size = 32;
                     let total_elements = tensor.dims.iter().map(|&d| d as i64).product::<i64>();
                     let blocks = (total_elements + block_size - 1) / block_size;
                     (blocks * (block_size + 1)) as usize
@@ -352,38 +331,22 @@ impl Model {
                     let total_elements = tensor.dims.iter().map(|&d| d as i64).product::<i64>();
                     (total_elements * 8) as usize
                 },
-                _ => panic!("Unsupported data type for size calculation: {}", tensor.data_type),
+                _ => {
+                    tracing::error!("Unsupported data type for tensor '{}': {}", tensor.name, tensor.data_type);
+                    return Err(format!("Unsupported data type for size calculation: {}", tensor.data_type).into());
+                }
             };
             
-            println!("    Bytes needed: {}", bytes_needed);
-            println!("    Offset: {}", tensor.offset);
-            println!("    Total required size: {}", tensor.offset as usize + bytes_needed);
-            
-            // Debug logging for tensor details
-            println!("    Debug - Tensor details:");
-            println!("      Name: {}", tensor.name);
-            println!("      Type: {} ({} elements)", tensor.type_string(), tensor_size);
-            println!("      Dimensions: {:?}", tensor.dims);
-            println!("      Data type: {}", tensor.data_type);
-            
-            // Validate that the tensor's data fits within the memory map
             if tensor.offset as usize + bytes_needed > self.data.len() {
-                println!("    ❌ ERROR: Tensor extends beyond memory map bounds");
-                println!("    Debug - Memory map details:");
-                println!("      Memory map size: {} bytes", self.data.len());
-                println!("      Tensor offset: {} bytes", tensor.offset);
-                println!("      Tensor size: {} bytes", bytes_needed);
-                println!("      Total required: {} bytes", tensor.offset as usize + bytes_needed);
-                self.gguf_reader.print_metadata_table();
+                tracing::error!("Tensor '{}' extends beyond memory map bounds", tensor.name);
                 return Err(format!(
                     "Tensor '{}' extends beyond memory map bounds (offset: {}, size: {}, total: {}, map size: {})",
                     tensor.name, tensor.offset, bytes_needed, tensor.offset as usize + bytes_needed, self.data.len()
                 ).into());
             }
-            println!("    ✓ Valid");
         }
 
-        println!("\n✓ All tensors validated successfully");
+        tracing::info!("Model validation completed successfully");
         Ok(())
     }
 
