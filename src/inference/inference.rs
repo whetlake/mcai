@@ -1,7 +1,8 @@
 use std::error::Error;
 use crate::inference::model::Model;
 use crate::gguf::TensorInfo;
-use crate::inference::tokenizer::Tokenizer;
+use crate::inference::tokenizer::{Tokenizer, TokenizerConfig};
+use crate::inference::tokenizer::types::{TokenizerType, determine_tokenizer_type};
 
 /// Context for running inference with the model
 pub struct InferenceContext {
@@ -21,18 +22,19 @@ pub struct InferenceContext {
 
 impl InferenceContext {
     /// Creates a new inference context
-    pub fn new(model: Model, max_context_size: usize) -> Self {
-        // Create tokenizer based on model architecture
-        let tokenizer = Tokenizer::new(model.architecture.clone());
+    pub fn new(model: Model, max_context_size: usize) -> Result<Self, Box<dyn Error + Send + Sync>> {
+        // Get model metadata and create tokenizer
+        let metadata = &model.gguf_reader().metadata;
+        let tokenizer = Tokenizer::new(model.architecture.clone(), metadata)?;
         
-        Self {
+        Ok(Self {
             model,
             tokenizer,
             context: Vec::new(),
             max_context_size,
             temperature: 0.7, // Default temperature
             max_tokens: 2048, // Default max tokens
-        }
+        })
     }
 
     /// Processes input text and generates a response
