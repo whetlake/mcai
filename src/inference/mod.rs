@@ -101,7 +101,10 @@ pub struct ModelDetails {
     pub filename: String,
     /// Absolute path to the models directory
     pub directory: String,
+    /// Complete metadata from the model
+    pub metadata: Vec<(String, String, String)>,
 }
+
 
 /// The core inference engine that manages model state and operations.
 ///
@@ -418,6 +421,13 @@ impl InferenceEngine {
             model_path.clone(),
         )?;
         
+        // Get metadata from the model
+        let metadata: Vec<(String, String, String)> = model.gguf_reader()
+            .metadata
+            .iter()
+            .map(|(key, (type_str, value))| (key.clone(), type_str.clone(), value.to_string()))
+            .collect();
+
         // Set the current model
         {
             let mut current_model = self.current_model.write().map_err(|e| e.to_string())?;
@@ -451,6 +461,7 @@ impl InferenceEngine {
             tensor_count: model_entry.tensor_count,
             filename: model_entry.filename,
             directory: self.models_dir.to_string_lossy().to_string(),
+            metadata,
         })
     }
 
@@ -463,7 +474,8 @@ impl InferenceEngine {
         self.current_model.read().map(|m| m.is_some()).unwrap_or(false)
     }
 
-    /// Generates text from the current model using the provided prompt.
+    /// Generates text from the current model using the provided prompt. This is the function that gets the user
+    /// input and generates the response via the inference context.
     ///
     /// # Arguments
     ///
@@ -517,5 +529,49 @@ impl InferenceEngine {
         }
 
         Ok(())
+    }
+
+    /// Gets metadata for the currently attached model.
+    ///
+    /// # Returns
+    ///
+    /// A Result containing the model details or an error if no model is attached
+    pub fn get_metadata(&self) -> Result<ModelDetails, Box<dyn Error + Send + Sync>> {
+        // Check if a model is attached
+        if !self.is_model_attached() {
+            return Err("No model attached".into());
+        }
+
+        // Get the loaded model
+        let loaded_model = self.loaded_model.read().map_err(|e| e.to_string())?;
+        let model = loaded_model.as_ref().ok_or("No model loaded")?;
+
+        // Get metadata from the model
+        let metadata: Vec<(String, String, String)> = model.gguf_reader()
+            .metadata
+            .iter()
+            .map(|(key, (type_str, value))| (key.clone(), type_str.clone(), value.to_string()))
+            .collect();
+
+        // Return the model details
+        Ok(ModelDetails {
+            number: None, // Not relevant for current model
+            label: model.label.clone(),
+            name: model.name.clone(),
+            size: model.size.clone(),
+            architecture: model.architecture.clone(),
+            quantization: model.quantization.clone(),
+            added_date: model.loaded_at,
+            tensor_count: model.gguf_reader().tensor_count,
+            filename: model.path.file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or("")
+                .to_string(),
+            directory: model.path.parent()
+                .and_then(|p| p.to_str())
+                .unwrap_or("")
+                .to_string(),
+            metadata,
+        })
     }
 }

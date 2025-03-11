@@ -92,4 +92,77 @@ pub fn display_models_table(json_response: &str) {
     } else {
         println!("{}", "Failed to parse model data".red());
     }
+}
+
+/// Displays model metadata in a formatted table
+/// 
+/// # Arguments
+/// 
+/// * `json_response` - The JSON response from the server containing model metadata
+pub fn display_model_metadata(json_response: &str) {
+    if let Ok(value) = serde_json::from_str::<Value>(json_response) {
+        if let Some(data) = value.get("data") {
+            // Print model information header
+            println!("\n{}", "Model Information".cyan().bold());
+            println!("{}", "=".repeat(50).bright_black());
+
+            // Print basic model information
+            if let Some(name) = data.get("name").and_then(|v| v.as_str()) {
+                println!("{}: {}", "Name".yellow(), name);
+            }
+            if let Some(label) = data.get("label").and_then(|v| v.as_str()) {
+                println!("{}: {}", "Label".yellow(), label);
+            }
+            if let Some(arch) = data.get("architecture").and_then(|v| v.as_str()) {
+                println!("{}: {}", "Architecture".yellow(), arch);
+            }
+            if let Some(size) = data.get("size").and_then(|v| v.as_str()) {
+                println!("{}: {}", "Size".yellow(), size);
+            }
+            if let Some(quant) = data.get("quantization").and_then(|v| v.as_str()) {
+                println!("{}: {}", "Quantization".yellow(), quant);
+            }
+            if let Some(tensors) = data.get("tensor_count").and_then(|v| v.as_u64()) {
+                println!("{}: {}", "Tensor Count".yellow(), tensors);
+            }
+            if let Some(filename) = data.get("filename").and_then(|v| v.as_str()) {
+                println!("{}: {}", "Filename".yellow(), filename);
+            }
+
+            // Create metadata table
+            if let Some(metadata) = data.get("metadata").and_then(|v| v.as_array()) {
+                println!("\n{}", "Metadata Details".cyan().bold());
+                println!("{}", "=".repeat(50).bright_black());
+
+                let mut table = Table::new();
+                table.set_header(vec![
+                    Cell::new("Key").fg(comfy_table::Color::Yellow).add_attribute(Attribute::Bold),
+                    Cell::new("Type").fg(comfy_table::Color::Cyan).add_attribute(Attribute::Bold),
+                    Cell::new("Value").fg(comfy_table::Color::Green).add_attribute(Attribute::Bold),
+                ])
+                .load_preset(comfy_table::presets::UTF8_FULL)
+                .set_content_arrangement(ContentArrangement::Dynamic);
+
+                for item in metadata {
+                    if let (Some(key), Some(type_str), Some(value)) = (
+                        item.get(0).and_then(|v| v.as_str()),
+                        item.get(1).and_then(|v| v.as_str()),
+                        item.get(2).and_then(|v| v.as_str())
+                    ) {
+                        table.add_row(vec![
+                            Cell::new(key).fg(comfy_table::Color::Yellow),
+                            Cell::new(type_str).fg(comfy_table::Color::Cyan),
+                            Cell::new(value).fg(comfy_table::Color::Green),
+                        ]);
+                    }
+                }
+
+                println!("{table}\n");
+            }
+        } else if let Some(message) = value.get("message").and_then(|m| m.as_str()) {
+            println!("{}: {}", "Error".red(), message);
+        }
+    } else {
+        println!("{}", "Failed to parse metadata response".red());
+    }
 } 
