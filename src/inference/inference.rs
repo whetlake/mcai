@@ -1,8 +1,7 @@
 use std::error::Error;
 use crate::inference::model::Model;
 use crate::gguf::TensorInfo;
-use crate::inference::tokenizer::{Tokenizer, TokenizerConfig};
-use crate::inference::tokenizer::types::{TokenizerType, determine_tokenizer_type};
+use crate::inference::tokenizer::Tokenizer;
 
 /// Context for running inference with the model
 pub struct InferenceContext {

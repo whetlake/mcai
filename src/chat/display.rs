@@ -149,10 +149,36 @@ pub fn display_model_metadata(json_response: &str) {
                         item.get(1).and_then(|v| v.as_str()),
                         item.get(2).and_then(|v| v.as_str())
                     ) {
+                        // If the type is Array, truncate the display
+                        let display_value = if type_str == "Array" {
+                            // Check if it's an array by looking for [ at the start
+                            if value.starts_with('[') && value.ends_with(']') {
+                                // Extract the array elements
+                                let elements: Vec<&str> = value[1..value.len()-1]
+                                    .split(',')
+                                    .map(|s| s.trim())
+                                    .collect();
+                                
+                                if elements.len() > 5 {
+                                    // Take first 5 elements and add ellipsis with total count
+                                    let preview: Vec<_> = elements.iter().take(5).map(|s| *s).collect();
+                                    format!("[{} ... out of {}]", 
+                                        preview.join(", "), 
+                                        elements.len())
+                                } else {
+                                    value.to_string()
+                                }
+                            } else {
+                                value.to_string()
+                            }
+                        } else {
+                            value.to_string()
+                        };
+
                         table.add_row(vec![
                             Cell::new(key).fg(comfy_table::Color::Yellow),
                             Cell::new(type_str).fg(comfy_table::Color::Cyan),
-                            Cell::new(value).fg(comfy_table::Color::Green),
+                            Cell::new(display_value).fg(comfy_table::Color::Green),
                         ]);
                     }
                 }

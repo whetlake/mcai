@@ -328,37 +328,22 @@ fn read_metadata_kv(file: &mut File, version: u32) -> Result<(String, String, GG
                 file.read_u32::<LittleEndian>()? as u64
             };
             
-            // Prepare preview array
-            let preview_count = std::cmp::min(5, arr_len as usize);
-            let mut preview = Vec::with_capacity(preview_count);
+            // Read full array
+            let mut array = Vec::with_capacity(arr_len as usize);
             
             // Single loop to handle all elements
             for i in 0..arr_len {
                 if element_type == 8 { // STRING
-                    // Read or skip based on whether we want this element in the preview
-                    let read_full = i < preview_count as u64;
-                    let str_val = gguf_utils::read_string(file, version, !read_full)?;
-                    
-                    // Add to preview if needed
-                    if read_full {
-                        preview.push(GGUFValue::String(str_val));
-                    }
+                    let str_val = gguf_utils::read_string(file, version, false)?;
+                    array.push(GGUFValue::String(str_val));
                 } else {
-                    // Handle non-string types
-                    if i < preview_count as u64 {
-                        // Read and store full value for preview
-                        let value = gguf_utils::read_value_by_type(file, element_type, version)?;
-                        preview.push(value);
-                    } else {
-                        // Skip using type size
-                        let element_size = gguf_utils::get_type_size(element_type, version)?;
-                        file.seek(SeekFrom::Current(element_size as i64))?;
-                    }
+                    let value = gguf_utils::read_value_by_type(file, element_type, version)?;
+                    array.push(value);
                 }
             }
             
-            // Return the truncated array with preview
-            Ok((key, type_str, GGUFValue::TruncatedArray(preview, arr_len)))
+            // Return the full array
+            Ok((key, type_str, GGUFValue::Array(array)))
         },
         _ => {
             let value = gguf_utils::read_value_by_type(file, value_type, version)?;
