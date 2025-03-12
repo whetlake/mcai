@@ -133,7 +133,15 @@ impl GPT2Tokenizer {
         
         // Then split using the regex pattern
         let parts: Vec<String> = PATTERN.find_iter(&unicode_text)
-            .map(|m| m.as_str().to_string())
+            .map(|m| {
+                let part = m.as_str();
+                if part.starts_with(' ') {
+                    // Replace leading space with Ġ
+                    format!("Ġ{}", &part[1..])
+                } else {
+                    part.to_string()
+                }
+            })
             .collect();
         println!("Parts after regex split: {:?}", parts);
         parts
@@ -191,18 +199,11 @@ impl GPT2Tokenizer {
         let mut tokens = Vec::new();
         for part in &parts {
             if let Some(&token_id) = self.vocabulary.get(part) {
-                println!("Found token ID {} for part {:?}", token_id, part);
+                println!("Found token ID {} for {:?}", token_id, part);
                 tokens.push(token_id);
             } else {
-                println!("Part {:?} not in vocabulary, falling back to bytes", part);
-                // If token not in vocabulary, fall back to byte-level encoding
-                for b in part.as_bytes() {
-                    let c = BYTES_TO_UNICODE.get(b).unwrap_or(&char::REPLACEMENT_CHARACTER);
-                    if let Some(&token_id) = self.vocabulary.get(&c.to_string()) {
-                        println!("Found token ID {} for byte {:?} -> {:?}", token_id, b, c);
-                        tokens.push(token_id);
-                    }
-                }
+                println!("Part {:?} not in vocabulary", part);
+                return Err("Token not found in vocabulary".into());
             }
         }
         
