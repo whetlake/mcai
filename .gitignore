@@ -36,5 +36,5 @@ logs/
 .DS_Store
 Thumbs.db
 
-.vocab_tokens.txt
-.merge_tokens.txt
+vocab_tokens.txt
+merge_tokens.txt
