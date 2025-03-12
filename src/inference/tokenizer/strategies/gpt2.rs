@@ -3,9 +3,6 @@ use std::collections::BTreeMap;
 use crate::gguf::GGUFValue;
 use crate::inference::tokenizer::TokenizerStrategy;
 use crate::inference::tokenizer::utilities::{PATTERN, BYTES_TO_UNICODE};
-use std::process;
-use std::fs::File;
-use std::io::Write;
 
 
 /// Configuration specific to GPT2 tokenizer
@@ -26,17 +23,12 @@ pub struct GPT2TokenizerConfig {
 pub struct GPT2Tokenizer {
     vocabulary: BTreeMap<String, u32>,
     reverse_vocabulary: BTreeMap<u32, String>,
-    merges: Vec<(String, String)>,
+    merges: Vec<String>,
     config: GPT2TokenizerConfig,
 }
 
 impl GPT2Tokenizer {
     pub fn new(metadata: &BTreeMap<String, (String, GGUFValue)>) -> Result<Self, Box<dyn Error + Send + Sync>> {
-        // Print all metadata keys
-        println!("All metadata keys:");
-        for key in metadata.keys() {
-            println!("  {}", key);
-        }
 
         // Parse configuration from metadata
         let mut config = GPT2TokenizerConfig {
@@ -58,29 +50,19 @@ impl GPT2Tokenizer {
             config.bos_token_id = value.to_string().parse().unwrap_or(1);
         }
         if let Some((_, value)) = metadata.get("tokenizer.ggml.eos_token_id") {
-            let eos_id = value.to_string().parse().unwrap_or(2);
-            config.eos_token_id = eos_id;
-            config.padding_token_id = eos_id; // For GPT-2, padding token is same as EOS
+            config.eos_token_id = value.to_string().parse().unwrap_or(2);
+        }
+        if let Some((_, value)) = metadata.get("tokenizer.ggml.padding_token_id") {
+            config.padding_token_id = value.to_string().parse().unwrap_or(2);
         }
 
         // Load vocabulary
         let mut vocabulary = BTreeMap::new();
         let mut reverse_vocabulary = BTreeMap::new();
-        println!("Checking for tokenizer.ggml.tokens in metadata...");
-        if let Some((_, value)) = metadata.get("tokenizer.ggml.tokens") {
-            // For display, show truncated preview
-            println!("Found tokenizer.ggml.tokens: {}", value);
-            
+        if let Some((_, value)) = metadata.get("tokenizer.ggml.tokens") {            
             // Get the array from metadata
             let tokens: Vec<String> = match value {
                 GGUFValue::Array(arr) => {
-                    arr.iter().map(|v| match v {
-                        GGUFValue::String(s) => Ok(s.clone()),
-                        _ => Err(format!("Invalid token type: {:?}", v))
-                    }).collect::<Result<Vec<String>, String>>()?
-                },
-                GGUFValue::TruncatedArray(arr, total) => {
-                    println!("Warning: Using truncated token array with {} total tokens", total);
                     arr.iter().map(|v| match v {
                         GGUFValue::String(s) => Ok(s.clone()),
                         _ => Err(format!("Invalid token type: {:?}", v))
@@ -91,28 +73,7 @@ impl GPT2Tokenizer {
                     return Err("Tokenizer tokens must be an array".into());
                 }
             };
-            
-            println!("Successfully loaded tokens");
-            // Only show first 5 tokens in preview
-            let preview: Vec<_> = tokens.iter().take(5).collect();
-            println!("First tokens in vocabulary: {:?} ... out of {}", preview, tokens.len());
-            println!("Total vocabulary size: {}", tokens.len());
-            
-            // Write vocabulary to file with error handling
-            println!("Attempting to write vocab_tokens.txt...");
-            match File::create("vocab_tokens.txt") {
-                Ok(mut file) => {
-                    println!("Successfully created vocab_tokens.txt");
-                    for token in &tokens {
-                        match writeln!(file, "{}", token) {
-                            Ok(_) => (),
-                            Err(e) => println!("Error writing token to file: {}", e),
-                        }
-                    }
-                },
-                Err(e) => println!("Error creating vocab_tokens.txt: {}", e),
-            }
-            
+                                    
             // Create vocabulary mappings
             for (i, token) in tokens.into_iter().enumerate() {
                 vocabulary.insert(token.clone(), i as u32);
@@ -133,11 +94,8 @@ impl GPT2Tokenizer {
         // Load BPE merges
         let mut merges = Vec::new();
         if let Some((_, value)) = metadata.get("tokenizer.ggml.merges") {
-            // For display, show truncated preview
-            println!("Found tokenizer.ggml.merges: {}", value);
-            
             // Get the array from metadata
-            let merge_list: Vec<String> = if let GGUFValue::Array(arr) = value {
+            merges = if let GGUFValue::Array(arr) = value {
                 arr.iter().map(|v| match v {
                     GGUFValue::String(s) => s.clone(),
                     _ => v.to_string()
@@ -146,34 +104,6 @@ impl GPT2Tokenizer {
                 println!("Unexpected value type for merges: {:?}", value);
                 return Err("Tokenizer merges must be an array".into());
             };
-            
-            println!("Successfully loaded merges");
-            // Only show first 5 merges in preview
-            let preview: Vec<_> = merge_list.iter().take(5).collect();
-            println!("First merges: {:?} ... out of {}", preview, merge_list.len());
-            println!("Total merges: {}", merge_list.len());
-            
-            // Write merges to file with error handling
-            println!("Attempting to write merge_tokens.txt...");
-            match File::create("merge_tokens.txt") {
-                Ok(mut file) => {
-                    println!("Successfully created merge_tokens.txt");
-                    for merge in &merge_list {
-                        match writeln!(file, "{}", merge) {
-                            Ok(_) => (),
-                            Err(e) => println!("Error writing merge to file: {}", e),
-                        }
-                    }
-                },
-                Err(e) => println!("Error creating merge_tokens.txt: {}", e),
-            }
-            
-            // Parse merges into pairs
-            for merge in merge_list {
-                if let Some((first, second)) = merge.split_once(' ') {
-                    merges.push((first.to_string(), second.to_string()));
-                }
-            }
         } else {
             println!("No tokenizer.ggml.merges found in metadata!");
             println!("Available metadata keys: {:?}", metadata.keys().collect::<Vec<_>>());
@@ -223,12 +153,11 @@ impl GPT2Tokenizer {
             
             // Look at each adjacent pair from left to right
             for i in 0..parts.len() - 1 {
-                let pair = format!("{}{}", parts[i], parts[i + 1]);
+                let pair = format!("{} {}", parts[i], parts[i + 1]);
                 println!("Checking pair: {:?}", pair);
                 
                 // Check if this pair exists in our merges list
-                let rank = self.merges.iter()
-                    .position(|(first, second)| first == &parts[i] && second == &parts[i + 1]);
+                let rank = self.merges.iter().position(|merge| merge == &pair);
                     
                 if let Some(r) = rank {
                     println!("Found merge for pair {:?} at rank {}", pair, r);
