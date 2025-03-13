@@ -15,7 +15,7 @@ const BOLD: &str = "\x1b[1m";
 
 // Import the display module
 mod display;
-use display::{display_models_table, display_model_metadata};
+use display::{display_models_table, display_model_metadata, display_tensor_info};
 
 // Add this struct to deserialize the model response
 #[derive(Deserialize)]
@@ -34,6 +34,7 @@ fn print_help(model_attached: bool) {
         println!("{GREEN}mcai clear{RESET} - Clear the screen");
         println!("{GREEN}mcai models{RESET} - Display available models");
         println!("{GREEN}mcai metadata{RESET} - Display current model metadata");
+        println!("{GREEN}mcai tensors{RESET} - Display current model tensors");
         println!("{GREEN}mcai drop{RESET} - Detach the current model");
     } else {
         println!("{GREEN}exit, bye, quit{RESET} - Exit the chat");
@@ -208,6 +209,24 @@ pub async fn chat_loop(settings: &Settings) -> Result<(), Box<dyn Error + Send +
                             },
                             Err(e) => {
                                 println!("Error requesting metadata: {}", e);
+                            }
+                        }
+                    },
+                    // Get tensors (only when a model is attached)
+                    cmd if model_attached && cmd == "mcai tensors" => {
+                        match client.get(format!("{}/api/v1/tensors", server_url)).send().await {
+                            Ok(response) => {
+                                match response.text().await {
+                                    Ok(text) => {
+                                        display_tensor_info(&text);
+                                    },
+                                    Err(e) => {
+                                        println!("Error reading response: {}", e);
+                                    }
+                                }
+                            },
+                            Err(e) => {
+                                println!("Error requesting tensors: {}", e);
                             }
                         }
                     },

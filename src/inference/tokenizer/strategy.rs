@@ -7,4 +7,7 @@ pub trait TokenizerStrategy: Send + Sync {
     
     /// Convert token IDs back into text
     fn decode(&self, tokens: &[u32]) -> Result<String, Box<dyn Error + Send + Sync>>;
+
+    /// Get the EOS (End of Sequence) token ID
+    fn get_eos_token_id(&self) -> u32;
 } 

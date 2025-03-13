@@ -6,7 +6,7 @@ use serde::{Serialize, Deserialize};
 use chrono::{DateTime, Utc, serde::ts_seconds};
 use crate::inference::inference::InferenceContext;
 use crate::inference::Model;
-use crate::gguf::{GGUFError, GGUFReader, is_gguf_file};
+use crate::gguf::{GGUFError, GGUFReader, is_gguf_file, TensorInfo};
 use std::collections::HashMap;
 use std::sync::RwLock;
 use std::path::PathBuf;
@@ -550,5 +550,24 @@ impl InferenceEngine {
                 .to_string(),
             metadata,
         })
+    }
+
+    /// Gets tensor information for the currently attached model.
+    ///
+    /// # Returns
+    ///
+    /// A Result containing a vector of tensor information or an error if no model is attached
+    pub fn get_tensors(&self) -> Result<Vec<TensorInfo>, Box<dyn Error + Send + Sync>> {
+        // Check if a model is attached
+        if !self.is_model_attached() {
+            return Err("No model attached".into());
+        }
+
+        // Get the loaded model
+        let loaded_model = self.loaded_model.read().map_err(|e| e.to_string())?;
+        let model = loaded_model.as_ref().ok_or("No model loaded")?;
+
+        // Get tensor information
+        Ok(model.gguf_reader().tensors.clone())
     }
 }

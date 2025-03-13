@@ -1,8 +1,9 @@
 use std::fmt::{self};
 use std::error::Error;
+use serde::{Serialize, Deserialize};
 
 /// GGUF metadata value types that can be stored in a GGUF file
-#[derive(Clone)]
+#[derive(Clone, Serialize, Deserialize)]
 pub enum GGUFValue {
     /// String value type for text data
     String(String),
@@ -117,7 +118,7 @@ impl From<std::io::Error> for GGUFError {
 }
 
 /// Value type identifiers from the GGUF format specification
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 pub enum GGUFValueType {
     // Basic data types
     UINT8 = 0,
@@ -218,7 +219,7 @@ impl From<u32> for GGUFValueType {
 }
 
 /// Information about a tensor in the GGUF file
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TensorInfo {
     /// Name/label of the tensor
     pub name: String,

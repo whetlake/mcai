@@ -46,9 +46,10 @@ impl InferenceContext {
         
         // Step 3: Generate response tokens
         let response_tokens = self.generate_tokens()?;
-        
+
         // Step 4: Decode response
         let response = self.tokenizer.decode(&response_tokens)?;
+
         
         Ok(response)
     }
@@ -72,6 +73,9 @@ impl InferenceContext {
         let mut generated_tokens = Vec::new();
         let mut current_context = self.context.clone();
         
+        // Get EOS token ID from tokenizer metadata
+        let eos_token_id = self.tokenizer.get_eos_token_id();
+        
         // Generate tokens until we hit max_tokens or EOS
         while generated_tokens.len() < self.max_tokens {
             // Get next token prediction
@@ -83,8 +87,8 @@ impl InferenceContext {
             // Update context for next prediction
             current_context.push(next_token);
             
-            // Check for EOS token (assuming it's 2)
-            if next_token == 2 {
+            // Check for EOS token
+            if next_token == eos_token_id {
                 break;
             }
         }
@@ -146,4 +150,5 @@ impl InferenceContext {
     pub fn set_max_tokens(&mut self, max_tokens: usize) {
         self.max_tokens = max_tokens;
     }
+
 } 

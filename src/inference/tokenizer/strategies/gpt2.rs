@@ -86,20 +86,19 @@ impl GPT2Tokenizer {
         }
 
         // Load BPE merges
-        let mut merges = Vec::new();
-        if let Some((_, value)) = metadata.get("tokenizer.ggml.merges") {
+        let merges = if let Some((_, value)) = metadata.get("tokenizer.ggml.merges") {
             // Get the array from metadata
-            merges = if let GGUFValue::Array(arr) = value {
+            if let GGUFValue::Array(arr) = value {
                 arr.iter().map(|v| match v {
                     GGUFValue::String(s) => s.clone(),
                     _ => v.to_string()
                 }).collect()
             } else {
                 return Err("Tokenizer merges must be an array".into());
-            };
+            }
         } else {
             return Err("GPT-2 tokenizer requires BPE merges in metadata".into());
-        }
+        };
 
         Ok(Self {
             vocabulary,
@@ -236,5 +235,9 @@ impl TokenizerStrategy for GPT2Tokenizer {
         }
         
         Ok(text)
+    }
+
+    fn get_eos_token_id(&self) -> u32 {
+        self.config.eos_token_id
     }
 } 

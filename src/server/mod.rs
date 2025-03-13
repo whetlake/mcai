@@ -4,6 +4,7 @@ use std::sync::Arc;
 use tokio::net::TcpListener;
 use crate::inference::InferenceEngine;
 use crate::inference::{ModelDetails, ModelEntry};
+use crate::gguf::TensorInfo;
 use tracing::{info, warn, error};
 use std::error::Error;
 
@@ -75,6 +76,7 @@ impl ApiServer {
             .route("/api/v1/generate", post(generate))
             .route("/api/v1/drop", post(drop_model))
             .route("/api/v1/metadata", get(get_metadata))
+            .route("/api/v1/tensors", get(get_tensors))
             .with_state(app_state);
 
         info!("Starting server on {}:{}", self.host, self.port);
@@ -217,6 +219,28 @@ async fn get_metadata(State(engine): State<Arc<InferenceEngine>>) -> impl IntoRe
             Json(ApiResponse {
                 status: "success".to_string(),
                 data: Some(metadata),
+                message: None,
+            })
+        },
+        Err(e) => {
+            Json(ApiResponse {
+                status: "error".to_string(),
+                data: None,
+                message: Some(e.to_string()),
+            })
+        }
+    }
+}
+
+/// Gets tensor information for the currently attached model
+async fn get_tensors(State(engine): State<Arc<InferenceEngine>>) -> impl IntoResponse {
+    info!("Tensors endpoint called");
+
+    match engine.get_tensors() {
+        Ok(tensors) => {
+            Json(ApiResponse {
+                status: "success".to_string(),
+                data: Some(tensors),
                 message: None,
             })
         },

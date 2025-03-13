@@ -191,4 +191,67 @@ pub fn display_model_metadata(json_response: &str) {
     } else {
         println!("{}", "Failed to parse metadata response".red());
     }
+}
+
+/// Displays tensor information in a formatted table
+/// 
+/// # Arguments
+/// 
+/// * `json_response` - The JSON response from the server containing tensor information
+pub fn display_tensor_info(json_response: &str) {
+    if let Ok(value) = serde_json::from_str::<Value>(json_response) {
+        if let Some(data) = value.get("data") {
+            // Print header
+            println!("\n{}", "Tensor Information".cyan().bold());
+            println!("{}", "=".repeat(50).bright_black());
+
+            // Create tensor table
+            if let Some(tensors) = data.as_array() {
+                let mut table = Table::new();
+                table.set_header(vec![
+                    Cell::new("Name").fg(comfy_table::Color::Yellow).add_attribute(Attribute::Bold),
+                    Cell::new("Dimensions").fg(comfy_table::Color::Cyan).add_attribute(Attribute::Bold),
+                    Cell::new("Type").fg(comfy_table::Color::Green).add_attribute(Attribute::Bold),
+                    Cell::new("Size").fg(comfy_table::Color::Magenta).add_attribute(Attribute::Bold),
+                ])
+                .load_preset(comfy_table::presets::UTF8_FULL)
+                .set_content_arrangement(ContentArrangement::Dynamic);
+
+                for tensor in tensors {
+                    if let (Some(name), Some(dims), Some(data_type), Some(n_dims)) = (
+                        tensor.get("name").and_then(|v| v.as_str()),
+                        tensor.get("dims").and_then(|v| v.as_array()),
+                        tensor.get("data_type").and_then(|v| v.as_str()),
+                        tensor.get("n_dims").and_then(|v| v.as_u64())
+                    ) {
+                        // Calculate total size
+                        let total_size: u64 = dims.iter()
+                            .filter_map(|d| d.as_u64())
+                            .product();
+
+                        // Format dimensions
+                        let dims_str = dims.iter()
+                            .map(|d| d.to_string())
+                            .collect::<Vec<_>>()
+                            .join(" × ");
+
+                        table.add_row(vec![
+                            Cell::new(name).fg(comfy_table::Color::Yellow),
+                            Cell::new(dims_str).fg(comfy_table::Color::Cyan),
+                            Cell::new(data_type).fg(comfy_table::Color::Green),
+                            Cell::new(total_size.to_string()).fg(comfy_table::Color::Magenta),
+                        ]);
+                    }
+                }
+
+                println!("{table}\n");
+            } else {
+                println!("{}", "No tensor information available".yellow());
+            }
+        } else if let Some(message) = value.get("message").and_then(|m| m.as_str()) {
+            println!("{}: {}", "Error".red(), message);
+        }
+    } else {
+        println!("{}", "Failed to parse tensor information".red());
+    }
 } 

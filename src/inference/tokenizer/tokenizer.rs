@@ -38,4 +38,9 @@ impl Tokenizer {
     pub fn decode(&self, tokens: &[u32]) -> Result<String, Box<dyn Error + Send + Sync>> {
         self.strategy.decode(tokens)
     }
+
+    /// Get the EOS (End of Sequence) token ID
+    pub fn get_eos_token_id(&self) -> u32 {
+        self.strategy.get_eos_token_id()
+    }
 }
