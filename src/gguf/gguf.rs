@@ -29,11 +29,14 @@ use std::io::BufReader;
 ///
 /// # Examples
 ///
-/// ```rust
+/// ```rust,no_run
 /// use mcai::gguf::GGUFReader;
 ///
-/// let reader = GGUFReader::new("path/to/model.gguf")?;
-/// let model_name = reader.get_metadata_value("general.name")?;
+/// fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+///     let reader = GGUFReader::new("path/to/model.gguf")?;
+///     let model_name = reader.get_metadata_value("general.name")?;
+///     Ok(())
+/// }
 /// ```
 pub struct GGUFReader {
     /// Path to the GGUF file
@@ -172,9 +175,14 @@ impl GGUFReader {
     ///
     /// # Examples
     ///
-    /// ```rust
-    /// let reader = GGUFReader::new("model.gguf")?;
-    /// let model_name = reader.get_metadata_value("general.name")?;
+    /// ```rust,no_run
+    /// use mcai::gguf::GGUFReader;
+    /// 
+    /// fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    ///     let reader = GGUFReader::new("model.gguf")?;
+    ///     let model_name = reader.get_metadata_value("general.name")?;
+    ///     Ok(())
+    /// }
     /// ```
     pub fn get_metadata_value(&self, key: &str) -> Result<GGUFValue, Box<dyn Error + Send + Sync>> {
         match self.metadata.get(key) {
@@ -191,9 +199,14 @@ impl GGUFReader {
     ///
     /// # Examples
     ///
-    /// ```rust
-    /// let reader = GGUFReader::new("model.gguf")?;
-    /// reader.print_metadata_table();
+    /// ```rust,no_run
+    /// use mcai::gguf::GGUFReader;
+    /// 
+    /// fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    ///     let reader = GGUFReader::new("model.gguf")?;
+    ///     reader.print_metadata_table();
+    ///     Ok(())
+    /// }
     /// ```
     pub fn print_metadata_table(&self) {
         let mut table = Table::new();
@@ -232,9 +245,14 @@ impl GGUFReader {
     ///
     /// # Examples
     ///
-    /// ```rust
-    /// let reader = GGUFReader::new("model.gguf")?;
-    /// reader.print_tensor_table();
+    /// ```rust,no_run
+    /// use mcai::gguf::GGUFReader;
+    /// 
+    /// fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    ///     let reader = GGUFReader::new("model.gguf")?;
+    ///     reader.print_tensor_table();
+    ///     Ok(())
+    /// }
     /// ```
     pub fn print_tensor_table(&self) {
         let mut table = Table::new();
