@@ -12,6 +12,7 @@ use std::sync::RwLock;
 use std::path::PathBuf;
 use indicatif::{ProgressBar, ProgressStyle};
 use tracing::{info, error, debug};
+use crate::config::Settings;
 
 /// Represents a model entry in the registry file.
 ///
@@ -94,6 +95,8 @@ pub struct InferenceEngine {
     pub models_dir: PathBuf,
     /// Registry of all available models and their metadata
     pub registry: RwLock<HashMap<String, ModelEntry>>,
+    /// Application settings
+    pub settings: Settings,
 }
 
 impl InferenceEngine {
@@ -102,13 +105,15 @@ impl InferenceEngine {
     /// # Arguments
     ///
     /// * `models_dir` - Path to the directory containing model files
-    pub fn new(models_dir: PathBuf) -> Self {
+    /// * `settings` - Application settings
+    pub fn new(models_dir: PathBuf, settings: Settings) -> Self {
         Self {
             current_model: RwLock::new(None),
             loaded_model: RwLock::new(None),
             inference_context: RwLock::new(None),
             models_dir,
             registry: RwLock::new(HashMap::new()),
+            settings,
         }
     }
 
@@ -415,10 +420,10 @@ impl InferenceEngine {
             *loaded_model = Some(model);
         }
         
-        // Create and set the inference context
+        // Create inference context with settings
         {
             let mut inference_context = self.inference_context.write().map_err(|e| e.to_string())?;
-            *inference_context = Some(InferenceContext::new(model_clone, 2048)?); // Default context size of 2048 tokens
+            *inference_context = Some(InferenceContext::new(model_clone, &self.settings)?);
         }
         
         // Return the model details

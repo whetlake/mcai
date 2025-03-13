@@ -67,7 +67,7 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
     info!("Settings loaded");
 
     // Create inference engine with models directory from settings
-    let engine: inference::InferenceEngine = inference::InferenceEngine::new(models_path);
+    let engine: inference::InferenceEngine = inference::InferenceEngine::new(models_path, settings.clone());
 
     // Create and start server
     let server = server::ApiServer::new(engine, settings.server.host.clone(), settings.server.port);
