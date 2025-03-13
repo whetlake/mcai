@@ -1,3 +1,6 @@
+/// Useful for understanding the tokenizer:
+/// https://huggingface.co/hkeshhk/bpetokenizer/blob/main/tokenizer/bpetokenizer/tokenizer.py
+
 use std::error::Error;
 use std::collections::BTreeMap;
 use crate::gguf::GGUFValue;
@@ -69,7 +72,6 @@ impl GPT2Tokenizer {
                     }).collect::<Result<Vec<String>, String>>()?
                 },
                 _ => {
-                    println!("Unexpected value type for tokens: {:?}", value);
                     return Err("Tokenizer tokens must be an array".into());
                 }
             };
@@ -80,16 +82,8 @@ impl GPT2Tokenizer {
                 reverse_vocabulary.insert(i as u32, token);
             }
         } else {
-            println!("No tokenizer.ggml.tokens found in metadata!");
-            println!("Available metadata keys: {:?}", metadata.keys().collect::<Vec<_>>());
             return Err("GPT-2 tokenizer requires vocabulary in metadata".into());
         }
-
-        // Also print a few example lookups
-        println!("Vocabulary lookup for 'am': {:?}", vocabulary.get("am"));
-        println!("Vocabulary lookup for 'Ġam': {:?}", vocabulary.get("Ġam"));
-        println!("Vocabulary lookup for 'i': {:?}", vocabulary.get("i"));
-        println!("Vocabulary lookup for 'Ġi': {:?}", vocabulary.get("Ġi"));
 
         // Load BPE merges
         let mut merges = Vec::new();
@@ -101,12 +95,9 @@ impl GPT2Tokenizer {
                     _ => v.to_string()
                 }).collect()
             } else {
-                println!("Unexpected value type for merges: {:?}", value);
                 return Err("Tokenizer merges must be an array".into());
             };
         } else {
-            println!("No tokenizer.ggml.merges found in metadata!");
-            println!("Available metadata keys: {:?}", metadata.keys().collect::<Vec<_>>());
             return Err("GPT-2 tokenizer requires BPE merges in metadata".into());
         }
 
@@ -121,38 +112,30 @@ impl GPT2Tokenizer {
     /// Preprocesses text according to GPT-2 rules
     fn preprocess_text(&self, text: &str) -> Vec<String> {
         println!("Preprocessing text: {:?}", text);
-        // First convert text bytes to unicode
-        let bytes = text.as_bytes();
-        println!("Bytes: {:?}", bytes);
-        let unicode_text: String = bytes
-            .iter()
-            .map(|&b| BYTES_TO_UNICODE.get(&b).unwrap_or(&char::REPLACEMENT_CHARACTER))
-            .collect();
-
-        println!("Unicode text: {:?}", unicode_text);
-        
-        // Then split using the regex pattern
-        let parts: Vec<String> = PATTERN.find_iter(&unicode_text)
-            .map(|m| {
-                let part = m.as_str();
-                if part.starts_with(' ') {
-                    // Replace leading space with Ġ
-                    format!("Ġ{}", &part[1..])
-                } else {
-                    part.to_string()
-                }
-            })
+        // First split using the regex pattern
+        let parts: Vec<String> = PATTERN.find_iter(text)
+            .map(|m| m.as_str().to_string())
             .collect();
         println!("Parts after regex split: {:?}", parts);
-        parts
+
+        // Then convert each part's bytes to unicode
+        let unicode_parts: Vec<String> = parts.iter()
+            .map(|part| {
+                let bytes = part.as_bytes();
+                bytes.iter()
+                    .map(|&b| BYTES_TO_UNICODE.get(&b).unwrap_or(&char::REPLACEMENT_CHARACTER))
+                    .collect()
+            })
+            .collect();
+        println!("Parts after unicode conversion: {:?}", unicode_parts);
+        
+        unicode_parts
     }
 
     /// Applies BPE encoding to a piece of text
     fn bpe_encode(&self, text: &str) -> Result<Vec<u32>, Box<dyn Error + Send + Sync>> {
-        println!("BPE encoding text: {:?}", text);
         // Start with individual characters
         let mut parts: Vec<String> = text.chars().map(|c| c.to_string()).collect();
-        println!("Initial parts: {:?}", parts);
         
         // Keep merging until no more merges can be applied
         while parts.len() > 1 {
@@ -162,15 +145,10 @@ impl GPT2Tokenizer {
             // Look at each adjacent pair from left to right
             for i in 0..parts.len() - 1 {
                 let pair = format!("{} {}", parts[i], parts[i + 1]);
-                println!("Checking pair: {:?}", pair);
                 
                 // Check if this pair exists in our merges list
                 let rank = self.merges.iter().position(|merge| merge == &pair);
                     
-                if let Some(r) = rank {
-                    println!("Found merge for pair {:?} at rank {}", pair, r);
-                }
-                
                 // If we found this pair and its rank is lower than our current minimum
                 if let Some(r) = rank {
                     if min_rank.is_none() || r < min_rank.unwrap() {
@@ -182,27 +160,22 @@ impl GPT2Tokenizer {
             
             // If we found no pairs to merge, we're done
             if min_idx.is_none() {
-                println!("No more merges possible");
                 break;
             }
             
             // Apply the merge with lowest rank
             let i = min_idx.unwrap();
             let merged = format!("{}{}", parts[i], parts[i + 1]);
-            println!("Applying merge at index {}: {:?}", i, merged);
             parts[i] = merged;
             parts.remove(i + 1);
-            println!("Parts after merge: {:?}", parts);
         }
         
         // Convert final parts to token IDs
         let mut tokens = Vec::new();
         for part in &parts {
             if let Some(&token_id) = self.vocabulary.get(part) {
-                println!("Found token ID {} for {:?}", token_id, part);
                 tokens.push(token_id);
             } else {
-                println!("Part {:?} not in vocabulary", part);
                 return Err("Token not found in vocabulary".into());
             }
         }
@@ -234,8 +207,8 @@ impl TokenizerStrategy for GPT2Tokenizer {
             tokens.push(self.config.eos_token_id);
         }
 
-        println!("tokens are :::: {:?}", tokens);
-        
+        println!("Tokens: {:?}", tokens);
+
         Ok(tokens)
     }
 

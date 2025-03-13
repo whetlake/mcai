@@ -4,7 +4,14 @@ use regex::Regex;
 
 /// The regex pattern used by tiktoken for initial text splitting
 pub static PATTERN: Lazy<Regex> = Lazy::new(|| {
-    Regex::new(r"(?i)('s|'t|'re|'ve|'m|'ll|'d)|[^\r\n\p{L}\p{N}]?\p{L}+|\p{N}{1,3}| ?[^\s\p{L}\p{N}]+[\r\n]*|\s*[\r\n]+|\s+").unwrap()
+    // Modified pattern without look-around assertions:
+    // - '(?i:[sdmt]|ll|ve|re) -> contractions
+    // - [^\r\n\p{L}\p{N}]?+\p{L}+ -> optional non-letter/digit followed by letters
+    // - \p{N}{1,3} -> 1-3 digits
+    // - [^\s\p{L}\p{N}]++[\r\n]* -> non-space/letter/digit followed by optional newlines
+    // - \s*[\r\n] -> whitespace followed by newline
+    // - \s+ -> remaining whitespace
+    Regex::new(r"'(?i:s|d|m|t|ll|ve|re)|[^\r\n\p{L}\p{N}]?\p{L}+|\p{N}{1,3}| ?[^\s\p{L}\p{N}]+[\r\n]*|\s*[\r\n]|\s+").unwrap()
 });
 
 /// Mapping from bytes to unicode strings, avoiding whitespace/control characters
