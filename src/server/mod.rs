@@ -53,7 +53,8 @@ impl ApiServer {
     pub fn new(engine: InferenceEngine, host: String, port: u16) -> Self {
         // Initialize model index at startup
         info!("Initializing model index...");
-        // Scan for models at startup
+        // Scan for models at startup to see if there are new gguf files
+        // in the models directory. If there are add them to the registry.
         if let Err(e) = engine.scan_models() {
             warn!("Failed to initialize model index: {}", e);
         }
@@ -63,7 +64,7 @@ impl ApiServer {
         Self {
             engine: Arc::new(engine),
             host,
-            port, 
+            port,
         }
     }
 

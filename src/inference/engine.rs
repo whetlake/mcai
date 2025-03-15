@@ -5,7 +5,7 @@ use std::thread;
 use serde::{Serialize, Deserialize};
 use chrono::{DateTime, Utc, serde::ts_seconds};
 use crate::inference::inference::InferenceContext;
-use crate::inference::Model;
+use crate::inference::model::{Model, ModelEntry, ModelDetails};
 use crate::gguf::{GGUFError, GGUFReader, is_gguf_file, TensorInfo};
 use std::collections::HashMap;
 use std::sync::RwLock;
@@ -13,71 +13,6 @@ use std::path::PathBuf;
 use indicatif::{ProgressBar, ProgressStyle};
 use tracing::{info, error, debug};
 use crate::config::Settings;
-
-/// Represents a model entry in the registry file.
-///
-/// This struct contains persistent metadata about available models
-/// and is serialized to/from the model_registry.json file.
-#[derive(Debug, Serialize, Deserialize, Clone)]
-pub struct ModelEntry {
-    /// Position in the model list (optional)
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub number: Option<usize>,
-    /// Filename of the model file (relative to models directory)
-    pub filename: String,
-    /// Short identifier/label for the model
-    pub label: String,
-    /// Human-readable name of the model
-    pub name: String,
-    /// Size category of the model (e.g., "7B", "13B")
-    pub size: String,
-    /// Architecture of the model (e.g., "LLaMA", "Mistral")
-    pub architecture: String,
-    /// Quantization format (e.g., "Q4_K_M", "Q5_K_M")
-    pub quantization: String,
-    /// File type from GGUF metadata (e.g., 15 for Q8_K)
-    pub file_type: i64,
-    /// Quantization version from GGUF metadata
-    pub quantization_version: i64,
-    /// Number of tensors in the model
-    pub tensor_count: u64,
-    /// When the model was added to the registry
-    #[serde(with = "ts_seconds")]
-    pub added_date: DateTime<Utc>,
-}
-
-/// Detailed model information for display and API responses.
-///
-/// This struct contains enriched information about a model,
-/// including runtime-calculated fields like tensor count and
-/// absolute directory paths.
-#[derive(Serialize, Deserialize)]
-pub struct ModelDetails {
-    /// Position in the model list (optional)
-    pub number: Option<usize>,
-    /// Short identifier for the model
-    pub label: String,
-    /// Human-readable name
-    pub name: String,
-    /// Size category (e.g., "7B")
-    pub size: String,
-    /// Model architecture
-    pub architecture: String,
-    /// Quantization format
-    pub quantization: String,
-    /// When the model was added
-    #[serde(with = "ts_seconds")]
-    pub added_date: DateTime<Utc>,
-    /// Number of tensors in the model
-    pub tensor_count: u64,
-    /// Name of the model file
-    pub filename: String,
-    /// Absolute path to the models directory
-    pub directory: String,
-    /// Complete metadata from the model
-    pub metadata: Vec<(String, String, String)>,
-}
-
 
 /// The core inference engine that manages model state and operations.
 ///
@@ -139,7 +74,7 @@ impl InferenceEngine {
             .collect();
         
         // Sort by added_date in descending order (newest first)
-        models.sort_by(|a, b| b.1.added_date.cmp(&a.1.added_date));
+        models.sort_by(|a: &(String, ModelEntry), b| b.1.added_date.cmp(&a.1.added_date));
         
         // Assign numbers (1 to newest, 2 to second newest, etc.)
         for (i, (filename, model_entry)) in models.into_iter().enumerate() {

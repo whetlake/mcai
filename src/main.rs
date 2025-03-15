@@ -28,7 +28,8 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
     // Load settings first
     let settings = Settings::new()?;
     
-    // Initialize the subscriber first, before any file operations
+    // Initialize the subscriber first, before any file operations.
+    // This ensures that the log file is created before any logging is done.
     let file_appender = tracing_appender::rolling::RollingFileAppender::new(
         tracing_appender::rolling::Rotation::DAILY,
         // Use log file path from settings, or default to "logs"
@@ -36,8 +37,10 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
         "mcai",
     );
     
+    // Create the log directory if it doesn't exist
     let (non_blocking, _guard) = tracing_appender::non_blocking(file_appender);
     
+    // Initialize the subscriber
     tracing_subscriber::fmt()
         // Write to both console and file
         .with_writer(non_blocking)
