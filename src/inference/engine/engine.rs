@@ -4,7 +4,7 @@ use std::time::Duration;
 use std::thread;
 use serde::{Serialize, Deserialize};
 use chrono::{DateTime, Utc, serde::ts_seconds};
-use crate::inference::inference::InferenceContext;
+use crate::inference::session::InferenceContext;
 use crate::inference::model::{Model, ModelEntry, ModelDetails, ModelRegistry};
 use crate::gguf::{GGUFError, GGUFReader, is_gguf_file, TensorInfo};
 use std::collections::HashMap;
