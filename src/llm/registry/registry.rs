@@ -1,6 +1,6 @@
 use std::error::Error;
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::collections::HashMap;
 use std::sync::RwLock;
 use std::time::Duration;
@@ -9,7 +9,7 @@ use chrono::Utc;
 use indicatif::{ProgressBar, ProgressStyle};
 use tracing::{info, error};
 use crate::gguf::{GGUFReader, GGUFError, is_gguf_file};
-use crate::llm::model::types::{ModelEntry, ModelDetails};
+use super::types::ModelEntry;
 
 /// Manages the model registry, including scanning for models and loading registry data.
 pub struct ModelRegistry {

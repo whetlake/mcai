@@ -7,9 +7,7 @@ use std::io::{Seek, SeekFrom, Read};
 use crate::gguf::is_gguf_file;
 use super::types::{GGUFValue, GGUFError, GGUFValueType, TensorInfo};
 use crate::gguf::gguf_utils;
-use comfy_table::*;
 use tracing::{info, error, debug};
-use std::io::BufReader;
 
 /// A reader for GGUF (GPT-Generated Unified Format) model files.
 ///

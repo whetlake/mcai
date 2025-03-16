@@ -1,17 +1,9 @@
 use std::error::Error;
-use std::fs;
-use std::time::Duration;
-use std::thread;
-use serde::{Serialize, Deserialize};
-use chrono::{DateTime, Utc, serde::ts_seconds};
 use crate::llm::session::InferenceContext;
-use crate::llm::model::{Model, ModelEntry, ModelDetails, ModelRegistry};
-use crate::gguf::{GGUFError, GGUFReader, is_gguf_file, TensorInfo};
-use std::collections::HashMap;
+use crate::llm::model::{Model, ModelDetails, ModelRegistry};
+use crate::gguf::TensorInfo;
 use std::sync::RwLock;
 use std::path::PathBuf;
-use indicatif::{ProgressBar, ProgressStyle};
-use tracing::{info, error, debug};
 use crate::config::Settings;
 
 /// The core inference engine that manages model state and operations.

@@ -236,19 +236,9 @@ impl Model {
         }
 
         // 3. Check tensor data accessibility
-        // Get quantization information from metadata
-        let file_type = self.get_metadata_value("general.file_type")
-            .ok()
-            .and_then(|v| v.as_int())
-            .ok_or_else(|| "Failed to get file_type from metadata")?;
-        
-        // Convert file_type to GGUFValueType
-        let file_type_enum = GGUFValueType::from(file_type as u32);
-        
         tracing::info!("Validating tensor data accessibility for {} tensors...", self.gguf_reader.tensors.len());
 
         for tensor in &self.gguf_reader.tensors {
-            let tensor_size = tensor.dims.iter().product::<u64>() as usize;
             
             let bytes_needed = match GGUFValueType::from(tensor.data_type) {
                 GGUFValueType::Q3_K_M | GGUFValueType::Q3_K_L | GGUFValueType::Q3_K_S => {
@@ -349,31 +339,6 @@ impl Model {
         tracing::info!("Model validation completed successfully");
         Ok(())
     }
-
-    /// Helper method to get metadata value with error handling
-    fn get_metadata_value(&self, key: &str) -> Result<crate::gguf::GGUFValue, Box<dyn Error + Send + Sync>> {
-        self.gguf_reader.get_metadata_value(key)
-    }
-
-    /// Displays model information in a formatted way
-    pub fn display_info(&self) {
-        println!("\nModel Information");
-        println!("{}", "=".repeat(50));
-        println!("Name: {}", self.name);
-        println!("Label: {}", self.label);
-        println!("Size: {}", self.size);
-        println!("Architecture: {}", self.architecture);
-        println!("Quantization: {}", self.quantization);
-        println!("Memory mapped size: {} bytes", self.data.len());
-        println!("Tensor count: {}", self.gguf_reader.tensor_count);
-        println!("Status: Attached");
-        println!();
-    }
-
-    /// Get reference to the memory-mapped data
-    pub fn data(&self) -> &[u8] {
-        &self.data
-    }
     
     /// Get the GGUF reader for accessing model metadata and tensors
     pub fn gguf_reader(&self) -> &GGUFReader {
@@ -384,9 +349,5 @@ impl Model {
     pub fn get_tensor_by_name(&self, name: &str) -> Option<&TensorInfo> {
         self.gguf_reader.tensors.iter().find(|t| t.name == name)
     }
-    
-    /// Get tensor data at the specified offset
-    pub fn get_tensor_data(&self, offset: u64, size: usize) -> &[u8] {
-        &self.data[offset as usize..offset as usize + size]
-    }
+
 }

@@ -1,5 +1,4 @@
 use axum::{
-    routing::{get, post},
     Json, 
     extract::State, 
     response::IntoResponse,
@@ -9,7 +8,7 @@ use std::sync::Arc;
 use tracing::{info, error};
 
 use crate::llm::engine::InferenceEngine;
-use crate::llm::model::ModelEntry;
+use crate::llm::registry::ModelEntry;
 use super::types::{
     ApiResponse, 
     GenerateRequest, 

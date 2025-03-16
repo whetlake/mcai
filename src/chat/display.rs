@@ -1,7 +1,7 @@
 use serde_json::Value;
 use comfy_table::{Table, Cell, ContentArrangement, Attribute, CellAlignment};
 use colored::*;
-use chrono::{DateTime, Utc, TimeZone};
+use chrono::{Utc, TimeZone};
 
 /// Displays a table of available models with colorful formatting.
 /// 

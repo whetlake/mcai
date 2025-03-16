@@ -119,6 +119,7 @@ impl From<std::io::Error> for GGUFError {
 
 /// Value type identifiers from the GGUF format specification
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[allow(non_camel_case_types)]
 pub enum GGUFValueType {
     // Basic data types
     UINT8 = 0,
@@ -231,13 +232,6 @@ pub struct TensorInfo {
     pub data_type: GGUFValueType,
     /// Offset in the file where tensor data begins
     pub offset: u64,
-}
-
-impl TensorInfo {
-    /// Returns a human-readable string representation of the tensor's data type.
-    pub fn type_string(&self) -> String {
-        self.data_type.type_string()
-    }
 }
 
 impl fmt::Display for TensorInfo {
