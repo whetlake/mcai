@@ -4,7 +4,7 @@ use tokio::net::TcpListener;
 use axum::{Router, routing::{get, post}};
 use tracing::{info, warn};
 
-use crate::inference::InferenceEngine;
+use crate::llm::engine::InferenceEngine;
 use super::routes;
 
 /// API Server for handling model inference requests

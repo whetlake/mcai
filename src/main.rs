@@ -4,11 +4,13 @@ use tracing_subscriber;
 use tracing_appender;
 use tracing::info;
 
+// Declare modules
+mod llm;
 mod gguf;
-mod inference;
 mod server;
 mod config;
 mod chat;
+
 use config::Settings;
 
 /// Main entry point for the MCAI application
@@ -70,7 +72,7 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
     info!("Settings loaded");
 
     // Create inference engine with models directory from settings
-    let engine: inference::InferenceEngine = inference::InferenceEngine::new(models_path, settings.clone());
+    let engine = llm::engine::InferenceEngine::new(models_path, settings.clone());
 
     // Create and start server
     let server = server::ApiServer::new(engine, settings.server.host.clone(), settings.server.port);

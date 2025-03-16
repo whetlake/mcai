@@ -1,7 +1,7 @@
 use std::error::Error;
-use crate::inference::model::Model;
+use crate::llm::model::Model;
 use crate::gguf::TensorInfo;
-use crate::inference::tokenizer::Tokenizer;
+use crate::llm::tokenizer::Tokenizer;
 use crate::config::Settings;
 
 /// Context for running inference with the model

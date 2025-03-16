@@ -1,5 +1,5 @@
 use serde::{Deserialize, Serialize};
-use crate::inference::ModelDetails;
+use crate::llm::model::ModelDetails;
 
 /// Request for text generation
 #[derive(Deserialize, Serialize, Clone)]

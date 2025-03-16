@@ -9,7 +9,7 @@ use chrono::Utc;
 use indicatif::{ProgressBar, ProgressStyle};
 use tracing::{info, error};
 use crate::gguf::{GGUFReader, GGUFError, is_gguf_file};
-use crate::inference::model::types::{ModelEntry, ModelDetails};
+use crate::llm::model::types::{ModelEntry, ModelDetails};
 
 /// Manages the model registry, including scanning for models and loading registry data.
 pub struct ModelRegistry {

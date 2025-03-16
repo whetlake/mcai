@@ -4,8 +4,8 @@
 use std::error::Error;
 use std::collections::BTreeMap;
 use crate::gguf::GGUFValue;
-use crate::inference::tokenizer::TokenizerStrategy;
-use crate::inference::tokenizer::utilities::{PATTERN, BYTES_TO_UNICODE};
+use crate::llm::tokenizer::TokenizerStrategy;
+use crate::llm::tokenizer::utilities::{PATTERN, BYTES_TO_UNICODE};
 
 
 /// Configuration specific to GPT2 tokenizer

@@ -8,7 +8,8 @@ use axum::{
 use std::sync::Arc;
 use tracing::{info, error};
 
-use crate::inference::{InferenceEngine, ModelEntry};
+use crate::llm::engine::InferenceEngine;
+use crate::llm::model::ModelEntry;
 use super::types::{
     ApiResponse, 
     GenerateRequest, 
