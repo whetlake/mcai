@@ -16,7 +16,7 @@ pub struct InferenceEngine {
     /// Currently selected model label (if any)
     pub current_model: RwLock<Option<String>>,
     /// Currently loaded model data (if any)
-    pub loaded_model: RwLock<Option<Model>>,
+    pub loaded_model: RwLock<Option<Arc<Model>>>,
     /// Inference context for the current model
     pub inference_context: RwLock<Option<InferenceContext>>,
     /// Model registry for managing available models
@@ -54,7 +54,7 @@ impl InferenceEngine {
     ///
     /// A Result containing the attached model details or an error
     pub fn attach_model(&self, model_number: usize) -> Result<ModelDetails, Box<dyn Error + Send + Sync>> {
-        // Get the model entry from the registry
+        // Get the model entry from the registry. That is the model number in the registry.
         let model_entry = self.model_registry.get_model_by_number(model_number)?;
         
         // Create the full path to the model file
@@ -71,8 +71,7 @@ impl InferenceEngine {
         )?;
         
         // Get metadata from the model
-        let metadata: Vec<(String, String, String)> = model.gguf_reader()
-            .metadata
+        let metadata: Vec<(String, String, String)> = model.metadata
             .iter()
             .map(|(key, (type_str, value))| (key.clone(), type_str.clone(), value.to_string()))
             .collect();
@@ -83,19 +82,17 @@ impl InferenceEngine {
             *current_model = Some(model_entry.label.clone());
         }
         
-        // Create a clone of the model for the inference context
-        let model_clone = model.clone();
-        
         // Set the loaded model
+        let model_arc = Arc::new(model);
         {
             let mut loaded_model = self.loaded_model.write().map_err(|e| e.to_string())?;
-            *loaded_model = Some(model);
+            *loaded_model = Some(Arc::clone(&model_arc));
         }
         
         // Create inference context with settings
         {
             let mut inference_context = self.inference_context.write().map_err(|e| e.to_string())?;
-            *inference_context = Some(InferenceContext::new(model_clone, &self.settings)?);
+            *inference_context = Some(InferenceContext::new(Arc::clone(&model_arc), &self.settings)?);
         }
         
         // Return the model details
@@ -196,8 +193,7 @@ impl InferenceEngine {
         let model = loaded_model.as_ref().ok_or("No model loaded")?;
 
         // Get metadata from the model
-        let metadata: Vec<(String, String, String)> = model.gguf_reader()
-            .metadata
+        let metadata: Vec<(String, String, String)> = model.metadata
             .iter()
             .map(|(key, (type_str, value))| (key.clone(), type_str.clone(), value.to_string()))
             .collect();
@@ -211,7 +207,7 @@ impl InferenceEngine {
             architecture: model.architecture.clone(),
             quantization: model.quantization.clone(),
             added_date: model.loaded_at,
-            tensor_count: model.gguf_reader().tensor_count,
+            tensor_count: model.tensors.len() as u64,
             filename: model.path.file_name()
                 .and_then(|n| n.to_str())
                 .unwrap_or("")
@@ -240,6 +236,6 @@ impl InferenceEngine {
         let model = loaded_model.as_ref().ok_or("No model loaded")?;
 
         // Get tensor information
-        Ok(model.gguf_reader().tensors.clone())
+        Ok(model.tensors.clone())
     }
 }

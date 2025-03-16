@@ -3,8 +3,8 @@ use std::error::Error;
 use chrono::{DateTime, Utc};
 use memmap2::Mmap;
 use std::fs::File;
-use crate::gguf::{GGUFReader, GGUFValueType};
-use std::fmt;
+use std::collections::BTreeMap;
+use crate::gguf::{GGUFReader, GGUFValueType, TensorInfo, GGUFValue, GGUFError};
 use tracing;
 
 /// Represents a loaded model in memory.
@@ -28,62 +28,13 @@ pub struct Model {
     pub loaded_at: DateTime<Utc>,
     /// Memory-mapped data of the model file
     data: Mmap,
-    /// GGUF reader for accessing model metadata and tensors
-    gguf_reader: GGUFReader,
-}
-
-impl fmt::Debug for Model {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("Model")
-            .field("label", &self.label)
-            .field("name", &self.name)
-            .field("size", &self.size)
-            .field("architecture", &self.architecture)
-            .field("quantization", &self.quantization)
-            .field("path", &self.path)
-            .field("loaded_at", &self.loaded_at)
-            .field("data_len", &self.data.len())
-            .field("tensor_count", &self.gguf_reader.tensor_count)
-            .finish()
-    }
-}
-
-impl Clone for Model {
-    fn clone(&self) -> Self {
-        // Create a new memory mapping of the same file
-        let file = File::open(&self.path).expect("Failed to open model file for cloning");
-        let data = unsafe { Mmap::map(&file).expect("Failed to create memory mapping for clone") };
-        
-        // Create a new GGUF reader
-        let gguf_reader = GGUFReader::new(&self.path).expect("Failed to create GGUF reader for clone");
-        
-        Self {
-            label: self.label.clone(),
-            name: self.name.clone(),
-            size: self.size.clone(),
-            architecture: self.architecture.clone(),
-            quantization: self.quantization.clone(),
-            path: self.path.clone(),
-            loaded_at: self.loaded_at,
-            data,
-            gguf_reader,
-        }
-    }
+    /// metadata
+    pub metadata: BTreeMap<String, (String, GGUFValue)>,
+    /// tensors
+    pub tensors: Vec<TensorInfo>,
 }
 
 impl Model {
-    /// Creates a new Model instance.
-    ///
-    /// # Arguments
-    ///
-    /// * `label` - Unique identifier for the model
-    /// * `name` - Human-readable name
-    /// * `size` - Size category
-    /// * `architecture` - Model architecture
-    /// * `quantization` - Quantization format
-    /// * `path` - Path to the model file
-    /// * `data` - Memory-mapped data of the model file
-    /// * `gguf_reader` - GGUF reader for accessing model metadata and tensors
     pub fn new(
         label: String,
         name: String,
@@ -92,7 +43,8 @@ impl Model {
         quantization: String,
         path: PathBuf,
         data: Mmap,
-        gguf_reader: GGUFReader,
+        metadata: BTreeMap<String, (String, GGUFValue)>,
+        tensors: Vec<TensorInfo>,
     ) -> Self {
         Self {
             label,
@@ -103,7 +55,8 @@ impl Model {
             path,
             loaded_at: Utc::now(),
             data,
-            gguf_reader,
+            metadata,
+            tensors,
         }
     }
 
@@ -148,7 +101,7 @@ impl Model {
         }
 
         // Step 5: Create the model instance
-        let model = Self::new(
+        let model: Model = Self::new(
             label,
             name,
             size,
@@ -156,7 +109,8 @@ impl Model {
             quantization,
             path,
             data,
-            gguf_reader,
+            gguf_reader.metadata,
+            gguf_reader.tensors,
         );
 
         // Step 6: Validate the model instance
@@ -204,7 +158,7 @@ impl Model {
         // First try with architecture-specific prefix
         for key in &required_metadata {
             let prefixed_key = format!("{}.{}", architecture, key);
-            if let Ok(_) = self.gguf_reader.get_metadata_value(&prefixed_key) {
+            if let Ok(_) = self.get_metadata_value(&prefixed_key) {
                 found_metadata = true;
                 break;
             }
@@ -214,7 +168,7 @@ impl Model {
         if !found_metadata {
             for key in &required_metadata {
                 let generic_key = format!("general.{}", key);
-                if let Ok(_) = self.gguf_reader.get_metadata_value(&generic_key) {
+                if let Ok(_) = self.get_metadata_value(&generic_key) {
                     found_metadata = true;
                     break;
                 }
@@ -236,9 +190,9 @@ impl Model {
         }
 
         // 3. Check tensor data accessibility
-        tracing::info!("Validating tensor data accessibility for {} tensors...", self.gguf_reader.tensors.len());
+        tracing::info!("Validating tensor data accessibility for {} tensors...", self.tensors.len());
 
-        for tensor in &self.gguf_reader.tensors {
+        for tensor in &self.tensors {
             
             let bytes_needed = match GGUFValueType::from(tensor.data_type) {
                 GGUFValueType::Q3_K_M | GGUFValueType::Q3_K_L | GGUFValueType::Q3_K_S => {
@@ -339,10 +293,25 @@ impl Model {
         tracing::info!("Model validation completed successfully");
         Ok(())
     }
-    
-    /// Get the GGUF reader for accessing model metadata and tensors
-    pub fn gguf_reader(&self) -> &GGUFReader {
-        &self.gguf_reader
+
+    /// Gets a metadata value from the model's metadata by key
+    /// 
+    /// # Arguments
+    /// * `key` - The metadata key to look up
+    /// 
+    /// # Returns
+    /// * `Ok(GGUFValue)` - The metadata value if found
+    /// * `Err` - If the key is not found in the metadata
+    pub fn get_metadata_value(&self, key: &str) -> Result<GGUFValue, Box<dyn Error + Send + Sync>> {
+        match self.metadata.get(key) {
+            Some((_, value)) => Ok(value.clone()),
+            None => Err(Box::new(GGUFError::MetadataNotFound(key.to_string())))
+        }
     }
+    
+    // /// Get the GGUF reader for accessing model metadata and tensors
+    // pub fn gguf_reader(&self) -> &GGUFReader {
+    //     &self.gguf_reader
+    // }
 
 }

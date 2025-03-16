@@ -1,4 +1,5 @@
 use std::error::Error;
+use std::sync::Arc;
 use crate::llm::model::Model;
 use crate::llm::tokenizer::Tokenizer;
 use crate::config::Settings;
@@ -6,7 +7,7 @@ use crate::config::Settings;
 /// Context for running inference with the model
 pub struct InferenceContext {
     /// The loaded model
-    model: Model,
+    model: Arc<Model>,
     /// The tokenizer for this model
     tokenizer: Tokenizer,
     /// Current context window
@@ -20,10 +21,9 @@ pub struct InferenceContext {
 }
 
 impl InferenceContext {
-    pub fn new(model: Model, settings: &Settings) -> Result<Self, Box<dyn Error + Send + Sync>> {
-        // Get model metadata and create tokenizer
-        let metadata = &model.gguf_reader().metadata;
-        let tokenizer = Tokenizer::new(model.architecture.clone(), metadata)?;
+    pub fn new(model: Arc<Model>, settings: &Settings) -> Result<Self, Box<dyn Error + Send + Sync>> {
+        // Create tokenizer using model metadata
+        let tokenizer = Tokenizer::new(model.architecture.clone(), &model.metadata)?;
         
         Ok(Self {
             model,

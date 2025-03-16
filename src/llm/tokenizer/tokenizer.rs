@@ -8,8 +8,6 @@ use super::strategies::GPT2Tokenizer;
 /// A tokenizer that converts text to tokens and back
 pub struct Tokenizer {
     strategy: Box<dyn TokenizerStrategy>,
-    tokenizer_type: TokenizerType,
-    architecture: String,
 }
 
 impl Tokenizer {
@@ -25,8 +23,6 @@ impl Tokenizer {
 
         Ok(Self {
             strategy,
-            tokenizer_type,
-            architecture,
         })
     }
 

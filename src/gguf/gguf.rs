@@ -9,33 +9,6 @@ use super::types::{GGUFValue, GGUFError, GGUFValueType, TensorInfo};
 use crate::gguf::gguf_utils;
 use tracing::{info, error, debug};
 
-/// A reader for GGUF (GPT-Generated Unified Format) model files.
-///
-/// The GGUFReader provides functionality to read and parse GGUF format files,
-/// which are used to store large language models. It handles reading the file
-/// header, metadata, and tensor information.
-///
-/// # Fields
-///
-/// * `path` - The path to the GGUF file
-/// * `is_valid_gguf` - Whether the file is a valid GGUF file
-/// * `tensor_count` - Number of tensors in the model
-/// * `metadata` - Key-value pairs of metadata stored in the file
-/// * `tensors` - Information about all tensors in the model
-/// * `file_type` - File type from metadata (e.g., 15 for Q8_K)
-/// * `quantization_version` - Quantization version from metadata
-///
-/// # Examples
-///
-/// ```rust,no_run
-/// use mcai::gguf::GGUFReader;
-///
-/// fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-///     let reader = GGUFReader::new("path/to/model.gguf")?;
-///     let model_name = reader.get_metadata_value("general.name")?;
-///     Ok(())
-/// }
-/// ```
 pub struct GGUFReader {
     /// Path to the GGUF file
     pub path: PathBuf,
@@ -57,28 +30,6 @@ pub struct GGUFReader {
 const GGUF_MAGIC: u32 = 0x46554747; // "GGUF" in ASCII
 
 impl GGUFReader {
-    /// Creates a new GGUF reader for the specified file path.
-    ///
-    /// This function attempts to open and parse a GGUF file, reading its header
-    /// and metadata. It validates the file format and extracts key information
-    /// about the model.
-    ///
-    /// # Arguments
-    ///
-    /// * `path` - Path to the GGUF file to read
-    ///
-    /// # Returns
-    ///
-    /// * `Result<Self, Box<dyn Error + Send + Sync>>` - A new GGUFReader instance
-    ///   or an error if the file cannot be read or is not a valid GGUF file
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if:
-    /// * The file cannot be opened
-    /// * The file is not a valid GGUF file
-    /// * The file header cannot be read
-    /// * The metadata cannot be parsed
     pub fn new<P: AsRef<Path>>(path: P) -> Result<Self, Box<dyn Error + Send + Sync>> {
         let path_box = Box::from(path.as_ref());
         
@@ -157,31 +108,6 @@ impl GGUFReader {
         })
     }
 
-    /// Retrieves a metadata value by its key.
-    ///
-    /// This method looks up a metadata value in the GGUF file using its key.
-    /// The key should be in the format "category.name" (e.g., "general.name").
-    ///
-    /// # Arguments
-    ///
-    /// * `key` - The key to look up in the metadata
-    ///
-    /// # Returns
-    ///
-    /// * `Result<GGUFValue, Box<dyn Error + Send + Sync>>` - The metadata value
-    ///   or an error if the key is not found
-    ///
-    /// # Examples
-    ///
-    /// ```rust,no_run
-    /// use mcai::gguf::GGUFReader;
-    /// 
-    /// fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    ///     let reader = GGUFReader::new("model.gguf")?;
-    ///     let model_name = reader.get_metadata_value("general.name")?;
-    ///     Ok(())
-    /// }
-    /// ```
     pub fn get_metadata_value(&self, key: &str) -> Result<GGUFValue, Box<dyn Error + Send + Sync>> {
         match self.metadata.get(key) {
             Some((_, value)) => Ok(value.clone()),
@@ -191,28 +117,6 @@ impl GGUFReader {
 
 }
 
-/// Reads a metadata key-value pair from the file.
-///
-/// This function parses a single metadata entry from the GGUF file, including
-/// the key, value type, and value itself. It handles different GGUF versions
-/// and value types appropriately.
-///
-/// # Arguments
-///
-/// * `file` - The file to read from
-/// * `version` - The GGUF file version
-///
-/// # Returns
-///
-/// * `Result<(String, String, GGUFValue), Box<dyn Error + Send + Sync>>` - A tuple
-///   containing the key, type string, and value, or an error if reading fails
-///
-/// # Errors
-///
-/// Returns an error if:
-/// * The key cannot be read
-/// * The value type is invalid
-/// * The value cannot be parsed
 fn read_metadata_kv(file: &mut File, version: u32) -> Result<(String, String, GGUFValue), Box<dyn Error + Send + Sync>> {
     // Read key length
     let key_length = if version >= 3 {
@@ -269,21 +173,7 @@ fn read_metadata_kv(file: &mut File, version: u32) -> Result<(String, String, GG
     }
 }
 
-/// Reads tensor information from the GGUF file.
-///
-/// This function parses the tensor information section of the GGUF file,
-/// reading the name, dimensions, and data type for each tensor.
-///
-/// # Arguments
-///
-/// * `file` - The file to read from
-/// * `tensor_count` - Number of tensors to read
-/// * `version` - The GGUF file version
-///
-/// # Returns
-///
-/// * `Result<Vec<TensorInfo>, Box<dyn Error + Send + Sync>>` - Vector of tensor information
-///   or an error if reading fails
+
 fn read_tensor_info(file: &mut File, tensor_count: u64, version: u32) -> Result<Vec<TensorInfo>, Box<dyn Error + Send + Sync>> {
     let mut tensors = Vec::with_capacity(tensor_count as usize);
 
