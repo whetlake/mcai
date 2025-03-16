@@ -1,9 +1,10 @@
 use std::error::Error;
+use std::sync::Arc;
 use crate::llm::session::InferenceContext;
-use crate::llm::model::{Model, ModelDetails, ModelRegistry};
+use crate::llm::model::{Model, ModelDetails};
+use crate::llm::registry::ModelRegistry;
 use crate::gguf::TensorInfo;
 use std::sync::RwLock;
-use std::path::PathBuf;
 use crate::config::Settings;
 
 /// The core inference engine that manages model state and operations.
@@ -19,45 +20,26 @@ pub struct InferenceEngine {
     /// Inference context for the current model
     pub inference_context: RwLock<Option<InferenceContext>>,
     /// Model registry for managing available models
-    pub model_registry: ModelRegistry,
+    pub model_registry: Arc<ModelRegistry>,
     /// Application settings
     pub settings: Settings,
 }
 
 impl InferenceEngine {
-    /// Creates a new inference engine with the specified models directory.
+    /// Creates a new inference engine with the specified registry.
     ///
     /// # Arguments
     ///
-    /// * `models_dir` - Path to the directory containing model files
+    /// * `registry` - Model registry to use
     /// * `settings` - Application settings
-    pub fn new(models_dir: PathBuf, settings: Settings) -> Self {
+    pub fn new(registry: Arc<ModelRegistry>, settings: Settings) -> Self {
         Self {
             current_model: RwLock::new(None),
             loaded_model: RwLock::new(None),
             inference_context: RwLock::new(None),
-            model_registry: ModelRegistry::new(models_dir),
+            model_registry: registry,
             settings,
         }
-    }
-
-    /// Loads or creates the model registry file.
-    ///
-    /// The registry is a JSON file that tracks all available models and their metadata.
-    ///
-    /// # Returns
-    ///
-    /// A Result indicating success or failure
-    pub fn load_or_create_registry(&self) -> Result<(), Box<dyn Error + Send + Sync>> {
-        self.model_registry.load_or_create_registry()
-    }
-
-    /// Scans for new models and updates the registry.
-    ///
-    /// This is a convenience method that combines loading the registry
-    /// and scanning for new models in the folder.
-    pub fn scan_models(&self) -> Result<(), Box<dyn Error + Send + Sync>> {
-        self.model_registry.scan_models()
     }
 
     /// Attaches a model by its number.

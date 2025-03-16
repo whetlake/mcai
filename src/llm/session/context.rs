@@ -1,6 +1,5 @@
 use std::error::Error;
 use crate::llm::model::Model;
-use crate::gguf::TensorInfo;
 use crate::llm::tokenizer::Tokenizer;
 use crate::config::Settings;
 
@@ -98,57 +97,9 @@ impl InferenceContext {
 
     /// Predicts the next token given the current context
     fn predict_next_token(&self, context: &[u32]) -> Result<u32, Box<dyn Error + Send + Sync>> {
-        // Get the model's output logits
-        let logits = self.get_logits(context)?;
-        
-        // Apply temperature sampling
-        let next_token = self.sample_from_logits(&logits)?;
+        let next_token = 111;
         
         Ok(next_token)
-    }
-
-    /// Gets the model's output logits for the current context
-    fn get_logits(&self, context: &[u32]) -> Result<Vec<f32>, Box<dyn Error + Send + Sync>> {
-        // TODO: Implement actual model inference
-        // For now, return dummy logits
-        Ok(vec![0.0; 32000]) // Assuming vocab size of 32000
-    }
-
-    /// Samples a token from the logits using temperature
-    fn sample_from_logits(&self, logits: &[f32]) -> Result<u32, Box<dyn Error + Send + Sync>> {
-        // TODO: Implement proper sampling
-        // For now, just return a dummy token
-        Ok(1)
-    }
-
-    /// Gets the current context size
-    pub fn context_size(&self) -> usize {
-        self.context.len()
-    }
-
-    /// Clears the current context
-    pub fn clear_context(&mut self) {
-        self.context.clear();
-    }
-    
-    /// Gets a reference to the model
-    pub fn model(&self) -> &Model {
-        &self.model
-    }
-    
-    /// Gets a tensor by name from the model
-    pub fn get_tensor_by_name(&self, name: &str) -> Option<&TensorInfo> {
-        self.model.get_tensor_by_name(name)
-    }
-
-    /// Sets the temperature for sampling
-    pub fn set_temperature(&mut self, temperature: f32) {
-        self.temperature = temperature.max(0.0).min(1.0);
-    }
-
-    /// Sets the maximum number of tokens to generate
-    pub fn set_max_tokens(&mut self, max_tokens: usize) {
-        self.max_tokens = max_tokens;
     }
 
 } 

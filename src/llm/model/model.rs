@@ -3,7 +3,7 @@ use std::error::Error;
 use chrono::{DateTime, Utc};
 use memmap2::Mmap;
 use std::fs::File;
-use crate::gguf::{GGUFReader, TensorInfo, GGUFValueType};
+use crate::gguf::{GGUFReader, GGUFValueType};
 use std::fmt;
 use tracing;
 
@@ -343,11 +343,6 @@ impl Model {
     /// Get the GGUF reader for accessing model metadata and tensors
     pub fn gguf_reader(&self) -> &GGUFReader {
         &self.gguf_reader
-    }
-    
-    /// Get a tensor by name
-    pub fn get_tensor_by_name(&self, name: &str) -> Option<&TensorInfo> {
-        self.gguf_reader.tensors.iter().find(|t| t.name == name)
     }
 
 }

@@ -309,17 +309,4 @@ impl ModelRegistry {
     pub fn get_model_path(&self, filename: &str) -> PathBuf {
         self.models_dir.join(filename)
     }
-
-    /// Saves the registry to disk.
-    ///
-    /// # Returns
-    ///
-    /// A Result indicating success or failure
-    pub fn save_registry(&self) -> Result<(), Box<dyn Error + Send + Sync>> {
-        let registry = self.registry.read().map_err(|e| e.to_string())?;
-        let registry_path = self.models_dir.join("model_registry.json");
-        let content = serde_json::to_string_pretty(&*registry)?;
-        fs::write(registry_path, content)?;
-        Ok(())
-    }
 } 

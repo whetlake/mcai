@@ -1,8 +1,11 @@
 use std::error::Error;
 use std::path::Path;
+use std::sync::Arc;
 use tracing_subscriber;
 use tracing_appender;
 use tracing::info;
+use llm::registry::ModelRegistry;
+use llm::engine::InferenceEngine;
 
 // Declare modules
 mod llm;
@@ -71,11 +74,21 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
 
     info!("Settings loaded");
 
-    // Create inference engine with models directory from settings
-    let engine = llm::engine::InferenceEngine::new(models_path, settings.clone());
+    // Create and initialize registry
+    let registry = Arc::new(ModelRegistry::new(models_path));
+    
+    // Scan for models
+    info!("Initializing model index...");
+    if let Err(e) = registry.scan_models() {
+        eprintln!("Failed to scan models: {}", e);
+    }
+    info!("Model index initialized");
+
+    // Create inference engine with the registry
+    let engine = InferenceEngine::new(Arc::clone(&registry), settings.clone());
 
     // Create and start server
-    let server = server::ApiServer::new(engine, settings.server.host.clone(), settings.server.port);
+    let server = server::ApiServer::new(Arc::clone(&registry), engine, settings.server.host.clone(), settings.server.port);
     
     // Start server in a separate task
     tokio::spawn(async move {

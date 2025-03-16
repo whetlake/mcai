@@ -8,7 +8,7 @@ use std::sync::Arc;
 use tracing::{info, error};
 
 use crate::llm::engine::InferenceEngine;
-use crate::llm::registry::ModelEntry;
+use crate::llm::registry::{ModelEntry, ModelRegistry};
 use super::types::{
     ApiResponse, 
     GenerateRequest, 
@@ -26,11 +26,11 @@ pub async fn health_check() -> &'static str {
 
 /// Returns a list of all available models in JSON format.
 /// The models are sorted by label for consistent ordering.
-pub async fn list_models(State(engine): State<Arc<InferenceEngine>>) -> impl IntoResponse {
+pub async fn list_models(State(registry): State<Arc<ModelRegistry>>) -> impl IntoResponse {
     info!("Models endpoint called");
     
     // Get the model registry
-    match engine.model_registry.registry.read() {
+    match registry.registry.read() {
         Ok(registry) => {
             info!("Successfully retrieved model registry");
             // Convert registry values to a vector and sort by label
