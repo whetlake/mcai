@@ -2,6 +2,7 @@ use std::error::Error;
 use std::sync::Arc;
 use crate::llm::model::Model;
 use crate::llm::tokenizer::Tokenizer;
+use crate::llm::inference::ForwardPass;
 use crate::config::Settings;
 
 /// Context for running inference with the model
@@ -18,6 +19,8 @@ pub struct InferenceContext {
     temperature: f32,
     /// Maximum number of tokens to generate
     max_tokens: usize,
+    /// Forward pass for token prediction
+    forward_pass: ForwardPass,
 }
 
 impl InferenceContext {
@@ -25,13 +28,35 @@ impl InferenceContext {
         // Create tokenizer using model metadata
         let tokenizer = Tokenizer::new(model.architecture.clone(), &model.metadata)?;
         
+        // Get the model's training context length from metadata
+        let model_context_length = match model.get_metadata_value(&format!("{}.context_length", model.architecture.to_lowercase()))
+            .or_else(|_| model.get_metadata_value("context_length")) {
+            Ok(value) => value.to_string().parse::<usize>()
+                .expect("Failed to parse context_length"),
+            Err(_) => panic!("Could not find context_length in model metadata"),
+        };
+        
+        // Cap the runtime context length to the model's training context length
+        let requested_context_size = settings.inference.context_size;
+        let max_context_size = if requested_context_size > model_context_length {
+            println!("Warning: Requested context size ({}) exceeds model's training context length ({}). Using model's context length instead.", 
+                     requested_context_size, model_context_length);
+            model_context_length
+        } else {
+            requested_context_size
+        };
+        
+        // Create forward pass
+        let forward_pass = ForwardPass::new(Arc::clone(&model));
+        
         Ok(Self {
             model,
             tokenizer,
             context: Vec::new(),
-            max_context_size: settings.inference.context_size,
+            max_context_size,
             temperature: settings.inference.temperature,
             max_tokens: settings.inference.max_tokens,
+            forward_pass,
         })
     }
 
@@ -97,9 +122,8 @@ impl InferenceContext {
 
     /// Predicts the next token given the current context
     fn predict_next_token(&self, context: &[u32]) -> Result<u32, Box<dyn Error + Send + Sync>> {
-        let next_token = 111;
-        
-        Ok(next_token)
+        // Use the ForwardPass's predict_next_token method directly
+        self.forward_pass.predict_next_token(context)
     }
 
 } 
