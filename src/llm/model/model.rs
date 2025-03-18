@@ -435,15 +435,6 @@ impl Model {
                 })
                 .collect();
             
-            if matches.is_empty() {
-                println!("Warning: Essential tensor '{}' not found in model", tensor_name);
-            } else {
-                println!("Found essential tensor '{}'", tensor_name);
-                // Print match details for each found match
-                for tensor in &matches {
-                    println!("  Tensor: {} {:?}", tensor.name, tensor.dims);
-                }
-            }
         }
         
         // Transformer-related tensor patterns that typically appear at the end of tensor names
@@ -455,9 +446,7 @@ impl Model {
             "ffn_down.weight", "ffn_gate.weight", "ffn_up.weight",
             "attn_norm.weight", "ffn_norm.weight",
         ];
-        
-        println!("\nAnalyzing transformer tensor patterns:");
-        
+                
         // Track block numbers for each pattern
         let mut pattern_to_block_numbers = std::collections::HashMap::new();
         
@@ -469,7 +458,6 @@ impl Model {
                 .collect();
             
             if !matching_tensors.is_empty() {
-                println!("Found {} tensors ending with '{}'", matching_tensors.len(), pattern);
                 
                 // Extract block numbers from matching tensors
                 let mut block_numbers = Vec::new();
@@ -492,12 +480,7 @@ impl Model {
                     // If we found a number, parse it
                     if num_start < num_end {
                         if let Ok(block_num) = prefix[num_start..num_end].parse::<usize>() {
-                            block_numbers.push(block_num);
-                            
-                            // For debugging, show the first few matches
-                            if block_numbers.len() <= 3 {
-                                println!("  - tensor: {}, block: {}", tensor.name, block_num);
-                            }
+                            block_numbers.push(block_num);                            
                         }
                     }
                 }
@@ -507,7 +490,7 @@ impl Model {
                     let min_block = *block_numbers.iter().min().unwrap();
                     let max_block = *block_numbers.iter().max().unwrap();
                     
-                    println!("  Block numbers for '{}': min={}, max={}", pattern, min_block, max_block);
+                    tracing::info!("  Block numbers for '{}': min={}, max={}", pattern, min_block, max_block);
                     pattern_to_block_numbers.insert(pattern.to_string(), (min_block, max_block));
                 }
             }
@@ -527,24 +510,14 @@ impl Model {
             let overall_min = *all_mins.iter().min().unwrap();
             let overall_max = *all_maxes.iter().max().unwrap();
             let detected_block_count = overall_max - overall_min + 1;
-            
-            println!("\nBlock indexing analysis:");
-            println!("  Minimum block number: {}", overall_min);
-            println!("  Maximum block number: {}", overall_max);
-            println!("  Detected block count: {}", detected_block_count);
-            println!("  Indexing starts at: {}", overall_min);
-            
+                        
             // Compare with metadata
             let metadata_blocks = self.params.block_count;
             if detected_block_count != metadata_blocks {
-                println!("  WARNING: Detected block count ({}) differs from metadata block count ({})", 
-                         detected_block_count, metadata_blocks);
-                         
-                // Update block_count in params to match detected value
-                println!("  Updating block_count in model parameters to match detected value");
+                tracing::warn!("  WARNING: Detected block count ({}) differs from metadata block count ({})", 
+                         detected_block_count, metadata_blocks);                         
                 self.params.block_count = detected_block_count;
             } else {
-                println!("  Block count matches metadata: {}", metadata_blocks);
                 self.block_count = Some(self.params.block_count);
             }
             
@@ -557,18 +530,16 @@ impl Model {
             }
             
             if !inconsistent_patterns.is_empty() {
-                println!("\nPatterns with inconsistent block numbering:");
+                tracing::warn!("\nPatterns with inconsistent block numbering:");
                 for (pattern, min, max) in inconsistent_patterns {
-                    println!("  {} (min={}, max={})", pattern, min, max);
+                    tracing::warn!("  {} (min={}, max={})", pattern, min, max);
                 }
             }
             
             // Update the block_index_start
-            self.block_index_start = Some(overall_min);
-            
-            println!("  Updated model parameters with detected block indexing information");
+            self.block_index_start = Some(overall_min);            
         } else {
-            println!("No tensors match the expected transformer patterns at the end of their names");
+            tracing::error!("No tensors match the expected transformer patterns at the end of their names");
         }
         
         // Print total number of tensors
