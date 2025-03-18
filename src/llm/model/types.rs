@@ -1,6 +1,27 @@
 use serde::{Serialize, Deserialize};
 use chrono::{DateTime, Utc, serde::ts_seconds};
 
+/// Cached model parameters extracted from the memory map for easy access
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ModelParameters {
+    /// Vocabulary size
+    pub vocab_size: usize,
+    /// Hidden dimension size
+    pub hidden_dim: usize,
+    /// Number of layers
+    pub block_count: usize,
+    /// Number of attention heads
+    pub head_count: usize,
+    /// Number of KV attention heads (for grouped-query attention)
+    pub head_count_kv: usize,
+    /// Model's training context length (from metadata)
+    pub model_context_length: usize,
+    /// Feed forward length
+    pub feed_forward_length: usize,
+    /// Layer norm epsilon
+    pub layer_norm_rms_epsilon: f32,
+}
+
 /// Detailed model information for display and API responses.
 ///
 /// This struct contains enriched information about a model,

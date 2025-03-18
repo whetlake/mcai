@@ -46,8 +46,8 @@ impl InferenceContext {
             requested_context_size
         };
         
-        // Create forward pass
-        let forward_pass = ForwardPass::new(Arc::clone(&model));
+        // Create forward pass with the adjusted context length
+        let forward_pass = ForwardPass::new(Arc::clone(&model), Some(max_context_size));
         
         Ok(Self {
             model,
@@ -121,7 +121,7 @@ impl InferenceContext {
     }
 
     /// Predicts the next token given the current context
-    fn predict_next_token(&self, context: &[u32]) -> Result<u32, Box<dyn Error + Send + Sync>> {
+    fn predict_next_token(&mut self, context: &[u32]) -> Result<u32, Box<dyn Error + Send + Sync>> {
         // Use the ForwardPass's predict_next_token method directly
         self.forward_pass.predict_next_token(context)
     }
