@@ -5,3 +5,4 @@ pub mod tokenizer;
 pub mod engine;
 pub mod registry;
 pub mod inference;
+pub mod tensor;

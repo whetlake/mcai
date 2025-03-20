@@ -1,9 +1,10 @@
-use std::error::Error;
 use std::sync::Arc;
+use std::error::Error;
 use crate::llm::model::Model;
 use crate::llm::tokenizer::Tokenizer;
-use crate::llm::inference::ForwardPass;
 use crate::config::Settings;
+use crate::llm::inference::ForwardPass;
+use crate::llm::tensor::backends;
 
 /// Context for running inference with the model
 pub struct InferenceContext {
@@ -25,29 +26,26 @@ pub struct InferenceContext {
 
 impl InferenceContext {
     pub fn new(model: Arc<Model>, settings: &Settings) -> Result<Self, Box<dyn Error + Send + Sync>> {
-        // Create tokenizer using model metadata
+        // Create the tokenizer
         let tokenizer = Tokenizer::new(model.architecture.clone(), &model.metadata)?;
         
-        // Get the model's training context length from metadata
-        let model_context_length = match model.get_metadata_value(&format!("{}.context_length", model.architecture.to_lowercase()))
-            .or_else(|_| model.get_metadata_value("context_length")) {
-            Ok(value) => value.to_string().parse::<usize>()
-                .expect("Failed to parse context_length"),
-            Err(_) => panic!("Could not find context_length in model metadata"),
-        };
-        
-        // Cap the runtime context length to the model's training context length
+        // Get requested context size from settings, or use model's default
         let requested_context_size = settings.inference.context_size;
-        let max_context_size = if requested_context_size > model_context_length {
-            println!("Warning: Requested context size ({}) exceeds model's training context length ({}). Using model's context length instead.", 
-                     requested_context_size, model_context_length);
-            model_context_length
+        
+        // Make sure we don't exceed the model's maximum context length
+        let max_context_size = if requested_context_size > model.params.model_context_length {
+            println!("WARNING: Requested context size {} exceeds model's maximum context length {}, using model's maximum",
+                requested_context_size, model.params.model_context_length);
+            model.params.model_context_length
         } else {
             requested_context_size
         };
         
+        // Create a backend for tensor operations
+        let backend = Arc::new(backends::create_backend());
+        
         // Create forward pass with the adjusted context length
-        let forward_pass = ForwardPass::new(Arc::clone(&model), Some(max_context_size));
+        let forward_pass = ForwardPass::new(Arc::clone(&model), backend, Some(max_context_size));
         
         Ok(Self {
             model,

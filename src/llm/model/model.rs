@@ -4,8 +4,9 @@ use chrono::{DateTime, Utc};
 use memmap2::Mmap;
 use std::fs::File;
 use std::collections::BTreeMap;
-use crate::gguf::{GGUFReader, GGUFValueType, TensorInfo, GGUFValue, GGUFError};
+use crate::gguf::{GGUFReader, TensorInfo, GGUFValue, GGUFError};
 use crate::llm::model::types::ModelParameters;
+use crate::llm::model::tensor_utils::TensorUtils;
 use tracing;
 
 /// Represents a loaded model in memory.
@@ -297,91 +298,12 @@ impl Model {
         tracing::info!("Validating tensor data accessibility for {} tensors...", self.tensors.len());
 
         for tensor in &self.tensors {
-            
-            let bytes_needed = match GGUFValueType::from(tensor.data_type) {
-                GGUFValueType::Q3_K_M | GGUFValueType::Q3_K_L | GGUFValueType::Q3_K_S => {
-                    let block_size = 32;
-                    let total_elements = tensor.dims.iter().map(|&d| d as i64).product::<i64>();
-                    let blocks = (total_elements + block_size - 1) / block_size;
-                    (blocks * (block_size * 3 / 8 + 2)) as usize
-                },
-                GGUFValueType::Q4_K_M | GGUFValueType::Q4_K_S => {
-                    let block_size = 32;
-                    let total_elements = tensor.dims.iter().map(|&d| d as i64).product::<i64>();
-                    let blocks = (total_elements + block_size - 1) / block_size;
-                    (blocks * (block_size * 4 / 8 + 2)) as usize
-                },
-                GGUFValueType::Q5_K_M | GGUFValueType::Q5_K_S => {
-                    let block_size = 32;
-                    let total_elements = tensor.dims.iter().map(|&d| d as i64).product::<i64>();
-                    let blocks = (total_elements + block_size - 1) / block_size;
-                    (blocks * (block_size * 5 / 8 + 2)) as usize
-                },
-                GGUFValueType::Q6_K => {
-                    let block_size = 32;
-                    let total_elements = tensor.dims.iter().map(|&d| d as i64).product::<i64>();
-                    let blocks = (total_elements + block_size - 1) / block_size;
-                    (blocks * (block_size * 6 / 8 + 2)) as usize
-                },
-                GGUFValueType::Q2_K => {
-                    let block_size = 32;
-                    let total_elements = tensor.dims.iter().map(|&d| d as i64).product::<i64>();
-                    let blocks = (total_elements + block_size - 1) / block_size;
-                    (blocks * (block_size * 2 / 8 + 2)) as usize
-                },
-                GGUFValueType::Q4_0 => {
-                    let block_size = 32;
-                    let total_elements = tensor.dims.iter().map(|&d| d as i64).product::<i64>();
-                    let blocks = (total_elements + block_size - 1) / block_size;
-                    (blocks * (block_size * 4 / 8 + 1)) as usize
-                },
-                GGUFValueType::Q4_1 => {
-                    let block_size = 32;
-                    let total_elements = tensor.dims.iter().map(|&d| d as i64).product::<i64>();
-                    let blocks = (total_elements + block_size - 1) / block_size;
-                    (blocks * (block_size * 4 / 8 + 2)) as usize
-                },
-                GGUFValueType::Q5_0 => {
-                    let block_size = 32;
-                    let total_elements = tensor.dims.iter().map(|&d| d as i64).product::<i64>();
-                    let blocks = (total_elements + block_size - 1) / block_size;
-                    (blocks * (block_size * 5 / 8 + 1)) as usize
-                },
-                GGUFValueType::Q5_1 => {
-                    let block_size = 32;
-                    let total_elements = tensor.dims.iter().map(|&d| d as i64).product::<i64>();
-                    let blocks = (total_elements + block_size - 1) / block_size;
-                    (blocks * (block_size * 5 / 8 + 2)) as usize
-                },
-                GGUFValueType::Q8_0 => {
-                    let block_size = 32;
-                    let total_elements = tensor.dims.iter().map(|&d| d as i64).product::<i64>();
-                    let blocks = (total_elements + block_size - 1) / block_size;
-                    (blocks * (block_size + 1)) as usize
-                },
-                GGUFValueType::FLOAT32 => {
-                    let total_elements = tensor.dims.iter().map(|&d| d as i64).product::<i64>();
-                    (total_elements * 4) as usize
-                },
-                GGUFValueType::UINT8 | GGUFValueType::INT8 => {
-                    let total_elements = tensor.dims.iter().map(|&d| d as i64).product::<i64>();
-                    total_elements as usize
-                },
-                GGUFValueType::UINT16 | GGUFValueType::INT16 => {
-                    let total_elements = tensor.dims.iter().map(|&d| d as i64).product::<i64>();
-                    (total_elements * 2) as usize
-                },
-                GGUFValueType::UINT32 | GGUFValueType::INT32 => {
-                    let total_elements = tensor.dims.iter().map(|&d| d as i64).product::<i64>();
-                    (total_elements * 4) as usize
-                },
-                GGUFValueType::UINT64 | GGUFValueType::INT64 => {
-                    let total_elements = tensor.dims.iter().map(|&d| d as i64).product::<i64>();
-                    (total_elements * 8) as usize
-                },
-                _ => {
-                    tracing::error!("Unsupported data type for tensor '{}': {}", tensor.name, tensor.data_type);
-                    return Err(format!("Unsupported data type for size calculation: {}", tensor.data_type).into());
+            // Use TensorUtils to calculate the bytes needed for this tensor
+            let bytes_needed = match TensorUtils::calculate_tensor_size(tensor) {
+                Ok(size) => size,
+                Err(e) => {
+                    tracing::error!("Error calculating size for tensor '{}': {}", tensor.name, e);
+                    return Err(format!("Error calculating size for tensor '{}': {}", tensor.name, e).into());
                 }
             };
             
@@ -435,6 +357,12 @@ impl Model {
                 })
                 .collect();
             
+            if matches.is_empty() {
+                tracing::warn!("Essential tensor '{}' not found in model", tensor_name);
+            } else {
+                tracing::info!("Found essential tensor '{}' with shape {:?}", 
+                              tensor_name, matches[0].dims);
+            }
         }
         
         // Transformer-related tensor patterns that typically appear at the end of tensor names
@@ -544,6 +472,18 @@ impl Model {
         
         // Print total number of tensors
         println!("\nTotal number of tensors: {}", self.tensors.len());
+    }
+
+    /// Read tensor data from the memory map
+    ///
+    /// # Arguments
+    /// * `tensor_info` - Information about the tensor to read
+    ///
+    /// # Returns
+    /// * `Vec<f32>` - Tensor data converted to f32 values
+    pub fn read_tensor_data(&self, tensor_info: &TensorInfo) -> Result<Vec<f32>, Box<dyn Error + Send + Sync>> {
+        // Use the utility to convert tensor data from raw bytes to f32
+        TensorUtils::convert_tensor_data(&self.data, tensor_info.offset as usize, tensor_info)
     }
 
 }

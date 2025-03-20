@@ -3,6 +3,8 @@ use std::sync::Arc;
 use std::collections::HashMap;
 use crate::llm::model::Model;
 use crate::gguf::{TensorInfo, GGUFValueType};
+use crate::llm::tensor::Tensor;
+use crate::llm::tensor::backends::Backend;
 
 /// Handles the forward pass of the neural network for token prediction
 pub struct ForwardPass {
@@ -11,12 +13,14 @@ pub struct ForwardPass {
     /// Maximum context length (adjusted from settings)
     max_context_length: usize,
     /// Cache for frequently accessed tensors
-    tensor_cache: HashMap<String, Vec<f32>>,
+    tensor_cache: HashMap<String, Tensor>,
+    /// Backend for tensor operations
+    backend: Arc<Box<dyn Backend>>,
 }
 
 impl ForwardPass {
     /// Creates a new ForwardPass instance
-    pub fn new(model: Arc<Model>, max_context_length: Option<usize>) -> Self {
+    pub fn new(model: Arc<Model>, backend: Arc<Box<dyn Backend>>, max_context_length: Option<usize>) -> Self {
         // Use provided max_context_length or fall back to model's training context length
         let max_context_length = max_context_length.unwrap_or(model.params.model_context_length);
         
@@ -44,6 +48,7 @@ impl ForwardPass {
             model,
             max_context_length,
             tensor_cache,
+            backend,
         };
         
         // Preload global tensors used in every forward pass
@@ -66,10 +71,8 @@ impl ForwardPass {
         let global_tensors = [
             // Token embedding table - needed for token embedding lookup (first step)
             "token_embd.weight",
-            
             // Output normalization - used in the final layer (before logits)
             "output_norm.weight", 
-            
             // Output projection - used for final logits (last step)
             "output.weight",  
         ];
@@ -92,79 +95,44 @@ impl ForwardPass {
     }
     
     /// Load a tensor from cache or from memory map
-    fn load_tensor(&mut self, tensor_name: &str) -> Result<&Vec<f32>, Box<dyn Error + Send + Sync>> {
+    fn load_tensor(&mut self, tensor_name: &str) -> Result<&Tensor, Box<dyn Error + Send + Sync>> {
         // Return from cache if already loaded
         if self.tensor_cache.contains_key(tensor_name) {
             return Ok(&self.tensor_cache[tensor_name]);
         }
         
-        // Find the tensor in the model
-        let tensor = self.model.tensors.iter()
+        // Find the tensor info in the model
+        let tensor_info = self.model.tensors.iter()
             .find(|t| t.name == tensor_name)
             .ok_or_else(|| format!("Tensor '{}' not found in model", tensor_name))?;
             
-        // For now, create a placeholder for the tensor data
-        // TODO: Implement actual tensor loading from memory map
-        let hidden_dim = self.model.params.hidden_dim;
-        let mut data = Vec::new();
+        // Print tensor information directly from TensorInfo
+        println!("Loading tensor: {}", tensor_name);
+        println!("  - Dimensions: {:?}", tensor_info.dims);
+        println!("  - Type: {:?}", tensor_info.data_type);
+        println!("  - Offset: {}", tensor_info.offset);
         
-        // Special handling for token embedding table
-        if tensor_name == "token_embd.weight" {
-            let vocab_size = self.model.params.vocab_size;
-            // Create a placeholder embedding table
-            data = vec![0.0; vocab_size * hidden_dim];
-            
-            // Initialize with some pattern based on token ID
-            // This is just a placeholder - real implementation would load from memory map
-            for token_id in 0..vocab_size {
-                for j in 0..hidden_dim {
-                    let idx = token_id * hidden_dim + j;
-                    // Create a pattern where each token has a unique embedding
-                    data[idx] = (((token_id * 997 + j * 1001) % 10000) as f32) / 10000.0 - 0.5;
-                }
-            }
-            
-            println!("Loaded token embedding table: {} x {}", vocab_size, hidden_dim);
-        } else if tensor_name == "output.weight" {
-            // Output projection matrix
-            let vocab_size = self.model.params.vocab_size;
-            // For output.weight, typically dimensions are [vocab_size, hidden_dim]
-            data = vec![0.0; vocab_size * hidden_dim];
-            
-            // Initialize with some pattern
-            for i in 0..vocab_size {
-                for j in 0..hidden_dim {
-                    let idx = i * hidden_dim + j;
-                    data[idx] = (((i * 1013 + j * 1019) % 10000) as f32) / 10000.0 - 0.5;
-                }
-            }
-            
-            println!("Loaded output projection: {} x {}", vocab_size, hidden_dim);
-        } else if tensor_name == "output_norm.weight" {
-            // Normalization weights are typically 1D with length = hidden_dim
-            data = vec![0.0; hidden_dim];
-            
-            // Initialize with reasonable values for layer norm (close to 1)
-            for i in 0..hidden_dim {
-                data[i] = 1.0 + ((i * 1021) % 1000) as f32 / 10000.0;
-            }
-            
-            println!("Loaded output normalization: {}", hidden_dim);
-        } else {
-            // For other tensors, create reasonable defaults based on tensor dimensions
-            let total_elements: usize = tensor.dims.iter().map(|&d| d as usize).product();
-            data = vec![0.0; total_elements];
-            
-            // Create some pattern in the data for testing
-            for i in 0..total_elements {
-                data[i] = ((i * 1009) % 10000) as f32 / 10000.0 - 0.5;
-            }
-            
-            println!("Loaded tensor: {} with shape {:?}", tensor_name, tensor.dims);
-        }
+        // Calculate total elements from dimensions
+        let total_elements: usize = tensor_info.dims.iter().map(|&d| d as usize).product();
+        println!("  - Total elements: {}", total_elements);
+        
+        // Create the shape vector for our tensor
+        let shape: Vec<usize> = tensor_info.dims.iter().map(|&d| d as usize).collect();
+        
+        // Load the actual tensor data from the model's memory map
+        println!("  - Reading tensor data from memory map...");
+        let start_time = std::time::Instant::now();
+        
+        // Read tensor data from memory map - propagate errors instead of using placeholders
+        let data = self.model.read_tensor_data(tensor_info)?;
+        let duration = start_time.elapsed();
+        println!("  - Read {} elements in {:.2?}", data.len(), duration);
+        
+        // Create a proper Tensor object with the data and shape
+        let tensor = Tensor::new(data, shape, Arc::clone(&self.backend))?;
         
         // Store in cache
-        self.tensor_cache.insert(tensor_name.to_string(), data);
+        self.tensor_cache.insert(tensor_name.to_string(), tensor);
         
         Ok(&self.tensor_cache[tensor_name])
     }
@@ -194,6 +162,7 @@ impl ForwardPass {
         
         // Now load the embedding table
         let embedding_table = self.load_tensor("token_embd.weight")?;
+        let embedding_data = embedding_table.data();
         
         // Lookup embeddings for each token
         let mut embeddings = Vec::with_capacity(tokens.len());
@@ -212,7 +181,7 @@ impl ForwardPass {
             let end_idx = start_idx + hidden_dim;
             
             // Copy the embedding from the embedding table
-            let token_embedding = embedding_table[start_idx..end_idx].to_vec();
+            let token_embedding = embedding_data[start_idx..end_idx].to_vec();
             embeddings.push(token_embedding);
         }
         
