@@ -1,6 +1,6 @@
 use std::error::Error;
 use std::fmt;
-use ndarray::{Array, Array1, Array2, ArrayView1, ArrayView2, Axis};
+use ndarray::{Array, Array1, Array2, ArrayView1};
 
 use super::Backend;
 
@@ -75,7 +75,6 @@ impl Backend for CpuBackend {
         a: &[f32],
         b: &[f32], 
         c: &mut [f32],
-        len: usize,
     ) -> Result<(), Box<dyn Error + Send + Sync>> {
         // Create ndarray views
         let a_array = ArrayView1::from(a);
@@ -102,7 +101,6 @@ impl Backend for CpuBackend {
         a: &[f32],
         b: &[f32],
         c: &mut [f32],
-        len: usize,
     ) -> Result<(), Box<dyn Error + Send + Sync>> {
         // Create ndarray views
         let a_array = ArrayView1::from(a);
@@ -212,7 +210,6 @@ impl Backend for CpuBackend {
         &self,
         a: &[f32],
         b: &[f32],
-        len: usize,
     ) -> Result<f32, Box<dyn Error + Send + Sync>> {
         // Create ndarray views
         let a_array = ArrayView1::from(a);
@@ -264,7 +261,7 @@ mod tests {
         let b = vec![5.0, 6.0, 7.0, 8.0];
         let mut c = vec![0.0; 4];
         
-        backend.add(&a, &b, &mut c, 4).unwrap();
+        backend.add(&a, &b, &mut c).unwrap();
         
         assert_eq!(c, vec![6.0, 8.0, 10.0, 12.0]);
     }
@@ -277,7 +274,7 @@ mod tests {
         let b = vec![5.0, 6.0, 7.0, 8.0];
         let mut c = vec![0.0; 4];
         
-        backend.mul(&a, &b, &mut c, 4).unwrap();
+        backend.mul(&a, &b, &mut c).unwrap();
         
         assert_eq!(c, vec![5.0, 12.0, 21.0, 32.0]);
     }

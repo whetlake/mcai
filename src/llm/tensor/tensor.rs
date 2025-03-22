@@ -136,7 +136,6 @@ impl Tensor {
             &self.data,
             &other.data,
             &mut result.data,
-            self.size(),
         )?;
         
         Ok(result)
@@ -158,7 +157,6 @@ impl Tensor {
             &self.data,
             &other.data,
             &mut result.data,
-            self.size(),
         )?;
         
         Ok(result)
@@ -177,7 +175,7 @@ impl Tensor {
         }
         
         // Call backend dot implementation
-        self.backend.dot(&self.data, &other.data, self.size())
+        self.backend.dot(&self.data, &other.data)
     }
     
     /// Get a reference to the tensor's backend

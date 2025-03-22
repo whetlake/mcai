@@ -1,6 +1,6 @@
 mod gguf;
 mod gguf_utils;
-mod types;
+pub mod types;
 
 // Re-export from types
 pub use types::GGUFError;

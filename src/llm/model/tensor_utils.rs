@@ -1,6 +1,6 @@
 use std::error::Error;
 use crate::gguf::{GGUFValueType, TensorInfo};
-use crate::llm::model::dequantize::Dequantizer;
+use crate::llm::quants::dequantize::Dequantizer;
 
 /// Provides utilities for working with tensor data
 pub struct TensorUtils;
@@ -26,22 +26,6 @@ impl TensorUtils {
         Dequantizer::dequantize(data, offset, total_elements, tensor_info.data_type)
     }
     
-    /// Calculates the number of bytes per element for a given data type
-    pub fn bytes_per_element(data_type: &GGUFValueType) -> usize {
-        match data_type {
-            GGUFValueType::FLOAT32 => 4,
-            GGUFValueType::INT32 | GGUFValueType::UINT32 => 4,
-            GGUFValueType::INT16 | GGUFValueType::UINT16 => 2,
-            GGUFValueType::INT8 | GGUFValueType::UINT8 => 1,
-            GGUFValueType::BOOL => 1,
-            // Quantized formats typically use 1 byte per element (but this is approximate)
-            GGUFValueType::Q4_0 | GGUFValueType::Q4_1 => 1, // Actually 0.5 bytes per element
-            GGUFValueType::Q5_0 | GGUFValueType::Q5_1 => 1, // Actually 0.625 bytes per element  
-            GGUFValueType::Q8_0 => 1,
-            // For other types, provide a reasonable default
-            _ => 4,
-        }
-    }
 
     /// Calculates the total bytes needed for a tensor, including handling quantized formats
     ///

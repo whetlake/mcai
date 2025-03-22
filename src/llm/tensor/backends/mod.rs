@@ -36,7 +36,6 @@ pub trait Backend: Send + Sync + Debug {
         a: &[f32],
         b: &[f32],
         c: &mut [f32],
-        len: usize,
     ) -> Result<(), Box<dyn Error + Send + Sync>>;
     
     /// Perform element-wise multiplication C = A * B
@@ -45,7 +44,6 @@ pub trait Backend: Send + Sync + Debug {
         a: &[f32],
         b: &[f32],
         c: &mut [f32],
-        len: usize,
     ) -> Result<(), Box<dyn Error + Send + Sync>>;
     
     /// Apply RMS normalization to a tensor
@@ -72,7 +70,6 @@ pub trait Backend: Send + Sync + Debug {
         &self,
         a: &[f32],
         b: &[f32],
-        len: usize,
     ) -> Result<f32, Box<dyn Error + Send + Sync>>;
 }
 

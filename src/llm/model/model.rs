@@ -57,7 +57,7 @@ impl Model {
         // Extract model parameters from metadata
         let params = Self::extract_model_parameters(&metadata, &architecture);
         
-        let mut model = Self {
+        let model = Self {
             label,
             name,
             size,
@@ -298,7 +298,9 @@ impl Model {
         tracing::info!("Validating tensor data accessibility for {} tensors...", self.tensors.len());
 
         for tensor in &self.tensors {
-            // Use TensorUtils to calculate the bytes needed for this tensor
+            // Use TensorUtils to calculate the bytes needed for this tensor. However this is only
+            // for validation purposes. We do not actually store any data here. its used only when
+            // the model is being loaded to ensure that the model is not corrupted.
             let bytes_needed = match TensorUtils::calculate_tensor_size(tensor) {
                 Ok(size) => size,
                 Err(e) => {
