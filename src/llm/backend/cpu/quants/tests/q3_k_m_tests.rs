@@ -142,7 +142,7 @@ mod q3_k_m_tests {
         
         // Check a sampling of values
         for i in 0..10 {
-            assert_eq!(result[i], -3.0);
+            assert_eq!(result[i], -3.0);   
         }
     }
     

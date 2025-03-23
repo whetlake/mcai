@@ -5,6 +5,7 @@ pub mod uint8;
 pub mod int16;
 pub mod uint16;
 pub mod q3_k_m;
+pub mod q4_k_s;
 
 // Common constants for all formats
 pub const QK_K: usize = 256;
@@ -61,6 +62,7 @@ static FORMAT_REGISTRY: Lazy<Mutex<Vec<Box<dyn FormatImpl>>>> = Lazy::new(|| {
     registry.push(int16::create_format());
     registry.push(uint16::create_format());
     registry.push(q3_k_m::create_format());
+    registry.push(q4_k_s::create_format());
     // Add new formats here when implemented
     
     Mutex::new(registry)
