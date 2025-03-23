@@ -41,7 +41,6 @@ impl Dequantizer {
             
             // Calculate elapsed time
             let elapsed = start_time.elapsed();
-            let bytes_processed = current_offset - offset;
             
             // Report the actual size information
             println!("Dequantization completed in {:.2?}", elapsed);
