@@ -2,7 +2,9 @@ use std::error::Error;
 use std::fmt;
 use ndarray::{Array, Array1, Array2, ArrayView1};
 
-use super::Backend;
+use super::super::Backend;
+use super::quants::dequantize::Dequantizer;
+use crate::gguf::GGUFValueType;
 
 /// CPU backend implementation using ndarray
 #[derive(Clone)]
@@ -219,6 +221,18 @@ impl Backend for CpuBackend {
         let result = a_array.dot(&b_array);
         
         Ok(result)
+    }
+
+    /// Dequantizes tensor data from its compressed format to f32 values
+    fn dequantize(
+        &self,
+        data: &[u8],
+        offset: usize,
+        total_elements: usize,
+        data_type: GGUFValueType,
+    ) -> Result<Vec<f32>, Box<dyn Error + Send + Sync>> {
+        // Use the CPU-specific Dequantizer to handle all tensor formats
+        Dequantizer::dequantize(data, offset, total_elements, data_type)
     }
 }
 

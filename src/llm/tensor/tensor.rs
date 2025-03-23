@@ -2,7 +2,8 @@ use std::error::Error;
 use std::sync::Arc;
 use std::fmt::{self, Debug};
 
-use super::backends::Backend;
+use crate::llm::backend::Backend;
+use crate::gguf::TensorInfo;
 
 /// A tensor representing a multi-dimensional array
 #[derive(Clone)]
@@ -26,6 +27,31 @@ impl Tensor {
         }
         
         Ok(Self { data, shape, backend })
+    }
+    
+    /// Create a tensor by loading and dequantizing from raw model data
+    pub fn from_tensor_info(
+        data: &[u8],
+        tensor_info: &TensorInfo,
+        backend: Arc<Box<dyn Backend>>,
+    ) -> Result<Self, Box<dyn Error + Send + Sync>> {
+        // Create the shape from dimensions
+        let shape: Vec<usize> = tensor_info.dims.iter().map(|&d| d as usize).collect();
+        
+        // Calculate total elements from dimensions
+        let total_elements: usize = shape.iter().product();
+        
+        // Use the backend's dequantize method to convert raw data to f32
+        let offset = tensor_info.offset as usize;
+        let dequantized_data = backend.dequantize(
+            data, 
+            offset, 
+            total_elements, 
+            tensor_info.data_type
+        )?;
+        
+        // Create a new tensor with the dequantized data
+        Self::new(dequantized_data, shape, backend)
     }
     
     /// Create a new tensor filled with zeros

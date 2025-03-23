@@ -1,5 +1,5 @@
+use super::super::dequantize::Dequantizer;
 use crate::gguf::GGUFValueType;
-use crate::llm::quants::dequantize::Dequantizer;
 
 #[cfg(test)]
 mod dequantize_tests {

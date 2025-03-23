@@ -1,9 +1,9 @@
 use std::error::Error;
 use std::fmt::Debug;
+use std::sync::Arc;
 
-pub mod cpu;
-// Re-export the CpuBackend
-pub use cpu::CpuBackend;
+use super::cpu::CpuBackend;
+use crate::gguf::GGUFValueType;
 
 /// A trait for tensor operation backends
 pub trait Backend: Send + Sync + Debug {
@@ -71,10 +71,29 @@ pub trait Backend: Send + Sync + Debug {
         a: &[f32],
         b: &[f32],
     ) -> Result<f32, Box<dyn Error + Send + Sync>>;
+    
+    /// Dequantizes tensor data from its compressed format to f32 values
+    ///
+    /// # Parameters
+    /// * `data` - The raw tensor data
+    /// * `offset` - The offset in bytes where the tensor data starts
+    /// * `total_elements` - The number of elements in the tensor
+    /// * `data_type` - The data type of the tensor
+    ///
+    /// # Returns
+    /// * A vector of f32 values representing the dequantized tensor
+    fn dequantize(
+        &self,
+        data: &[u8],
+        offset: usize,
+        total_elements: usize,
+        data_type: GGUFValueType,
+    ) -> Result<Vec<f32>, Box<dyn Error + Send + Sync>>;
 }
 
 // Factory function to create a backend based on available hardware
-pub fn create_backend() -> Box<dyn Backend> {
+pub fn create_backend() -> Arc<Box<dyn Backend>> {
+    // In the future, this can check for available hardware and select the best backend
     // For now, only CPU backend is available
-    Box::new(CpuBackend::new())
+    Arc::new(Box::new(CpuBackend::new()))
 }

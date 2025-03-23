@@ -2,9 +2,8 @@ use std::error::Error;
 use std::sync::Arc;
 use std::collections::HashMap;
 use crate::llm::model::Model;
-use crate::gguf::{TensorInfo, GGUFValueType};
 use crate::llm::tensor::Tensor;
-use crate::llm::tensor::backends::Backend;
+use crate::llm::backend::Backend;
 
 /// Handles the forward pass of the neural network for token prediction
 pub struct ForwardPass {
@@ -116,20 +115,19 @@ impl ForwardPass {
         let total_elements: usize = tensor_info.dims.iter().map(|&d| d as usize).product();
         println!("  - Total elements: {}", total_elements);
         
-        // Create the shape vector for our tensor
-        let shape: Vec<usize> = tensor_info.dims.iter().map(|&d| d as usize).collect();
-        
         // Load the actual tensor data from the model's memory map
         println!("  - Reading tensor data from memory map...");
         let start_time = std::time::Instant::now();
         
-        // Read tensor data from memory map - propagate errors instead of using placeholders
-        let data = self.model.read_tensor_data(tensor_info)?;
-        let duration = start_time.elapsed();
-        println!("  - Read {} elements in {:.2?}", data.len(), duration);
+        // Create the tensor directly from the tensor info and raw model data
+        let tensor = Tensor::from_tensor_info(
+            self.model.raw_data(),
+            tensor_info,
+            Arc::clone(&self.backend)
+        )?;
         
-        // Create a proper Tensor object with the data and shape
-        let tensor = Tensor::new(data, shape, Arc::clone(&self.backend))?;
+        let duration = start_time.elapsed();
+        println!("  - Loaded tensor in {:.2?}", duration);
         
         // Store in cache
         self.tensor_cache.insert(tensor_name.to_string(), tensor);

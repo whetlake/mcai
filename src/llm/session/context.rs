@@ -4,7 +4,7 @@ use crate::llm::model::Model;
 use crate::llm::tokenizer::Tokenizer;
 use crate::config::Settings;
 use crate::llm::inference::ForwardPass;
-use crate::llm::tensor::backends;
+use crate::llm::backend;
 
 /// Context for running inference with the model
 pub struct InferenceContext {
@@ -42,10 +42,10 @@ impl InferenceContext {
         };
         
         // Create a backend for tensor operations
-        let backend = Arc::new(backends::create_backend());
+        let backend = backend::create_backend();
         
         // Create forward pass with the adjusted context length
-        let forward_pass = ForwardPass::new(Arc::clone(&model), backend, Some(max_context_size));
+        let forward_pass: ForwardPass = ForwardPass::new(Arc::clone(&model), backend, Some(max_context_size));
         
         Ok(Self {
             model,

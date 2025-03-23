@@ -12,7 +12,7 @@
 /// Sign bit: 1 bit
 /// Exponent width: 5 bits
 /// Significand precision: 11 bits (10 explicitly stored)
-pub fn half_to_float(bytes: &[u8]) -> f32 {
+pub fn f16_to_f32(bytes: &[u8]) -> f32 {
     // Convert bytes to a u16 in little-endian format
     let half = u16::from_le_bytes([bytes[0], bytes[1]]);
 
@@ -56,17 +56,17 @@ mod tests {
     #[test]
     fn test_half_to_float() {
         // Test zero
-        assert_eq!(half_to_float(&[0, 0]), 0.0);
+        assert_eq!(f16_to_f32(&[0, 0]), 0.0);
         
         // Test one
-        assert_eq!(half_to_float(&[0, 60]), 1.0);
+        assert_eq!(f16_to_f32(&[0, 60]), 1.0);
         
         // Test negative number
-        assert_eq!(half_to_float(&[0, 0xC0]), -2.0);
+        assert_eq!(f16_to_f32(&[0, 0xC0]), -2.0);
         
         // Test common value (5.5)
         // IEEE 754 half-precision for 5.5 = 0x4580 (sign=0, exp=1+14=15, mantissa=0b1011000000=0x180)
         // In little-endian: [0x80, 0x45]
-        assert_eq!(half_to_float(&[0x80, 0x45]), 5.5);
+        assert_eq!(f16_to_f32(&[0x80, 0x45]), 5.5);
     }
 } 

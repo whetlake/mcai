@@ -1,6 +1,6 @@
 use std::error::Error;
 use crate::gguf::GGUFValueType;
-use crate::llm::quants::formats::FormatImpl;
+use super::FormatImpl;
 
 /// UINT8 format - direct storage of 8-bit unsigned integer values
 #[derive(Clone)]

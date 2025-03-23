@@ -6,7 +6,7 @@ use std::fs::File;
 use std::collections::BTreeMap;
 use crate::gguf::{GGUFReader, TensorInfo, GGUFValue, GGUFError};
 use crate::llm::model::types::ModelParameters;
-use crate::llm::model::tensor_utils::TensorUtils;
+use crate::llm::tensor::utils::calculate_tensor_size;
 use tracing;
 
 /// Represents a loaded model in memory.
@@ -298,10 +298,10 @@ impl Model {
         tracing::info!("Validating tensor data accessibility for {} tensors...", self.tensors.len());
 
         for tensor in &self.tensors {
-            // Use TensorUtils to calculate the bytes needed for this tensor. However this is only
+            // Calculate the bytes needed for this tensor. However this is only
             // for validation purposes. We do not actually store any data here. its used only when
             // the model is being loaded to ensure that the model is not corrupted.
-            let bytes_needed = match TensorUtils::calculate_tensor_size(tensor) {
+            let bytes_needed = match calculate_tensor_size(tensor) {
                 Ok(size) => size,
                 Err(e) => {
                     tracing::error!("Error calculating size for tensor '{}': {}", tensor.name, e);
@@ -476,16 +476,12 @@ impl Model {
         println!("\nTotal number of tensors: {}", self.tensors.len());
     }
 
-    /// Read tensor data from the memory map
+    /// Get a reference to the model's raw memory-mapped data
     ///
-    /// # Arguments
-    /// * `tensor_info` - Information about the tensor to read
-    ///
-    /// # Returns
-    /// * `Vec<f32>` - Tensor data converted to f32 values
-    pub fn read_tensor_data(&self, tensor_info: &TensorInfo) -> Result<Vec<f32>, Box<dyn Error + Send + Sync>> {
-        // Use the utility to convert tensor data from raw bytes to f32
-        TensorUtils::convert_tensor_data(&self.data, tensor_info.offset as usize, tensor_info)
+    /// This provides access to the underlying raw model data for direct access
+    /// by components like Tensor that need to read and process raw tensor data.
+    pub fn raw_data(&self) -> &[u8] {
+        &self.data
     }
 
 }

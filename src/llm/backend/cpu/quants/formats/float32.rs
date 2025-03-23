@@ -1,6 +1,6 @@
 use std::error::Error;
 use crate::gguf::GGUFValueType;
-use crate::llm::quants::formats::FormatImpl;
+use super::FormatImpl;
 
 /// Float32 format - direct storage of 32-bit floating point values
 #[derive(Clone)]
