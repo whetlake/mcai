@@ -2,7 +2,7 @@ use std::error::Error;
 use crate::gguf::GGUFValueType;
 use super::FormatImpl;
 
-/// INT8 format - direct storage of 8-bit signed integer values
+/// INT8 format - 8-bit signed integers
 #[derive(Clone)]
 pub struct Int8Format;
 
@@ -32,19 +32,36 @@ impl FormatImpl for Int8Format {
         num_elements: usize,
         result: &mut Vec<f32>,
     ) -> Result<(), Box<dyn Error + Send + Sync>> {
+        // Calculate size for reporting
+        let bytes_needed = num_elements;
+        let actual_size_mb = bytes_needed as f64 / (1024.0 * 1024.0);
+        let f32_size_mb = (num_elements * 4) as f64 / (1024.0 * 1024.0);
+        let compression_ratio = f32_size_mb / actual_size_mb;
+        
+        println!("INT8 Format Size Details:");
+        println!("  Total bytes needed: {} ({:.4} MB)", bytes_needed, actual_size_mb);
+        println!("  Equivalent F32 size: {:.4} MB", f32_size_mb);
+        println!("  Compression ratio: {:.2}x", compression_ratio);
+        
         // Ensure we have enough data
-        if *offset + num_elements > data.len() {
-            return Err("Not enough data to read INT8 values".into());
+        if *offset + bytes_needed > data.len() {
+            let available = if data.len() > *offset {
+                data.len() - *offset
+            } else {
+                0
+            };
+            return Err(format!("Not enough data to read INT8 values. Need {} bytes, but only have {}", 
+                              bytes_needed, available).into());
         }
         
-        // Get a slice of all the data at once
-        let values = &data[*offset..*offset + num_elements];
-        
-        // Pre-allocate space in the result vector
+        // Preallocate result vector
         result.reserve(num_elements);
         
-        // Convert all bytes to signed i8 first, then to f32
-        result.extend(values.iter().map(|&value| (value as i8) as f32));
+        // Convert each byte to a signed int8, then cast to f32
+        for i in 0..num_elements {
+            let val = data[*offset + i] as i8 as f32;
+            result.push(val);
+        }
         
         // Update offset
         *offset += num_elements;

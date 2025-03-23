@@ -32,12 +32,24 @@ impl FormatImpl for Float32Format {
         num_elements: usize,
         result: &mut Vec<f32>,
     ) -> Result<(), Box<dyn Error + Send + Sync>> {
-        // Calculate bytes needed
+        // Calculate size for reporting
         let bytes_needed = num_elements * 4; // 4 bytes per f32
+        let actual_size_mb = bytes_needed as f64 / (1024.0 * 1024.0);
+        let compression_ratio = 1.0; // No compression for f32
+        
+        println!("FLOAT32 Format Size Details:");
+        println!("  Total bytes needed: {} ({:.4} MB)", bytes_needed, actual_size_mb);
+        println!("  Compression ratio: {:.2}x", compression_ratio);
         
         // Ensure we have enough data
         if *offset + bytes_needed > data.len() {
-            return Err("Not enough data to read FLOAT32 values".into());
+            let available = if data.len() > *offset {
+                data.len() - *offset
+            } else {
+                0
+            };
+            return Err(format!("Not enough data to read FLOAT32 values. Need {} bytes, but only have {}", 
+                              bytes_needed, available).into());
         }
         
         // Check alignment - for float32, offset must be a multiple of 4 bytes

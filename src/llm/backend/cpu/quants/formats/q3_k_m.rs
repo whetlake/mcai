@@ -51,10 +51,29 @@ impl FormatImpl for Q3KMFormat {
         let bytes_per_block = QK_K/8 + QK_K/4 + 12 + 2;
         let bytes_needed = num_blocks * bytes_per_block;
         
+        // Calculate sizes for reporting
+        let theoretical_size_mb = (num_elements * 3) as f64 / 8.0 / (1024.0 * 1024.0);
+        let actual_size_mb = bytes_needed as f64 / (1024.0 * 1024.0);
+        let f32_size_mb = (num_elements * 4) as f64 / (1024.0 * 1024.0);
+        let compression_ratio = f32_size_mb / actual_size_mb;
+        
+        println!("Q3_K_M Format Size Details:");
+        println!("  Number of blocks: {}", num_blocks);
+        println!("  Bytes per block: {} bytes", bytes_per_block);
+        println!("  Total bytes needed: {} ({:.4} MB)", bytes_needed, actual_size_mb);
+        println!("  Theoretical 3-bit size: {:.4} MB", theoretical_size_mb);
+        println!("  Equivalent F32 size: {:.4} MB", f32_size_mb);
+        println!("  Compression ratio: {:.2}x", compression_ratio);
+        
         // Ensure we have enough data
         if *offset + bytes_needed > data.len() {
+            let available = if data.len() > *offset {
+                data.len() - *offset
+            } else {
+                0
+            };
             return Err(format!("Not enough data to read Q3_K_M values. Need {} bytes, but only have {}", 
-                              bytes_needed, data.len() - *offset).into());
+                              bytes_needed, available).into());
         }
         
         // Check alignment - offset should be aligned to at least 2 bytes for f16 access

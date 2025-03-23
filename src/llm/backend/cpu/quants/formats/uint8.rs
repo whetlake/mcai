@@ -2,7 +2,7 @@ use std::error::Error;
 use crate::gguf::GGUFValueType;
 use super::FormatImpl;
 
-/// UINT8 format - direct storage of 8-bit unsigned integer values
+/// UINT8 format - 8-bit unsigned integers
 #[derive(Clone)]
 pub struct Uint8Format;
 
@@ -24,7 +24,7 @@ impl FormatImpl for Uint8Format {
     fn clone_box(&self) -> Box<dyn FormatImpl> {
         Box::new(self.clone())
     }
-    
+
     fn dequantize(
         &self,
         data: &[u8],
@@ -32,19 +32,36 @@ impl FormatImpl for Uint8Format {
         num_elements: usize,
         result: &mut Vec<f32>,
     ) -> Result<(), Box<dyn Error + Send + Sync>> {
+        // Calculate size for reporting
+        let bytes_needed = num_elements;
+        let actual_size_mb = bytes_needed as f64 / (1024.0 * 1024.0);
+        let f32_size_mb = (num_elements * 4) as f64 / (1024.0 * 1024.0);
+        let compression_ratio = f32_size_mb / actual_size_mb;
+        
+        println!("UINT8 Format Size Details:");
+        println!("  Total bytes needed: {} ({:.4} MB)", bytes_needed, actual_size_mb);
+        println!("  Equivalent F32 size: {:.4} MB", f32_size_mb);
+        println!("  Compression ratio: {:.2}x", compression_ratio);
+        
         // Ensure we have enough data
-        if *offset + num_elements > data.len() {
-            return Err("Not enough data to read UINT8 values".into());
+        if *offset + bytes_needed > data.len() {
+            let available = if data.len() > *offset {
+                data.len() - *offset
+            } else {
+                0
+            };
+            return Err(format!("Not enough data to read UINT8 values. Need {} bytes, but only have {}", 
+                              bytes_needed, available).into());
         }
         
-        // Get a slice of all the data at once
-        let values = &data[*offset..*offset + num_elements];
-        
-        // Pre-allocate space in the result vector
+        // Preallocate result vector
         result.reserve(num_elements);
         
-        // Convert all bytes to f32 at once
-        result.extend(values.iter().map(|&value| value as f32));
+        // Simply convert each byte to f32
+        for i in 0..num_elements {
+            let val = data[*offset + i] as f32;
+            result.push(val);
+        }
         
         // Update offset
         *offset += num_elements;

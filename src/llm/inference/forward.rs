@@ -64,8 +64,6 @@ impl ForwardPass {
     /// 
     /// This method preloads the global tensors to improve performance.
     fn preload_global_tensors(&mut self) {
-        println!("Preloading global tensors (used in every forward pass)...");
-        
         // List of global tensors to preload
         let global_tensors = [
             // Token embedding table - needed for token embedding lookup (first step)
@@ -110,11 +108,7 @@ impl ForwardPass {
         println!("  - Dimensions: {:?}", tensor_info.dims);
         println!("  - Type: {:?}", tensor_info.data_type);
         println!("  - Offset: {}", tensor_info.offset);
-        
-        // Calculate total elements from dimensions
-        let total_elements: usize = tensor_info.dims.iter().map(|&d| d as usize).product();
-        println!("  - Total elements: {}", total_elements);
-        
+                
         // Load the actual tensor data from the model's memory map
         println!("  - Reading tensor data from memory map...");
         let start_time = std::time::Instant::now();
