@@ -120,7 +120,7 @@ impl ForwardPass {
         let start_time = std::time::Instant::now();
         
         // Create the tensor directly from the tensor info and raw model data
-        let tensor = Tensor::from_tensor_info(
+        let tensor = Tensor::new(
             self.model.raw_data(),
             tensor_info,
             Arc::clone(&self.backend)

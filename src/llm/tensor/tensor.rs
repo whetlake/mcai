@@ -18,29 +18,12 @@ pub struct Tensor {
 
 impl Tensor {
     /// Create a new tensor with the given data and shape
-    pub fn new(data: Vec<f32>, shape: Vec<usize>, backend: Arc<Box<dyn Backend>>) -> Result<Self, Box<dyn Error + Send + Sync>> {
-        // Check that data size matches shape
-        let expected_size: usize = shape.iter().product();
-        if data.len() != expected_size {
-            return Err(format!("Data length ({}) does not match shape {:?} (expected {})", 
-                               data.len(), shape, expected_size).into());
-        }
-        
-        Ok(Self { data, shape, backend })
-    }
-    
-    /// Create a tensor by loading and dequantizing from raw model data
-    pub fn from_tensor_info(
-        data: &[u8],
-        tensor_info: &TensorInfo,
-        backend: Arc<Box<dyn Backend>>,
-    ) -> Result<Self, Box<dyn Error + Send + Sync>> {
-        // Create the shape from dimensions
+    pub fn new(data: &[u8], tensor_info: &TensorInfo, backend: Arc<Box<dyn Backend>>) -> Result<Self, Box<dyn Error + Send + Sync>> {
         let shape: Vec<usize> = tensor_info.dims.iter().map(|&d| d as usize).collect();
         
         // Calculate total elements from dimensions
         let total_elements: usize = shape.iter().product();
-        
+
         // Use the backend's dequantize method to convert raw data to f32
         let offset = tensor_info.offset as usize;
         let dequantized_data = backend.dequantize(
@@ -50,9 +33,15 @@ impl Tensor {
             tensor_info.data_type
         )?;
         
-        // Create a new tensor with the dequantized data
-        Self::new(dequantized_data, shape, backend)
+        // Check that data size matches shape
+        if dequantized_data.len() != total_elements {
+            return Err(format!("Dequantized data length ({}) does not match shape {:?} (expected {})", 
+                               dequantized_data.len(), shape, total_elements).into());
+        }
+        
+        Ok(Self { data: dequantized_data, shape, backend })
     }
+    
     
     /// Create a new tensor filled with zeros
     pub fn zeros(shape: Vec<usize>, backend: Arc<Box<dyn Backend>>) -> Self {
