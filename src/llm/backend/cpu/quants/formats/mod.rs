@@ -15,16 +15,6 @@ use std::sync::Mutex;
 use once_cell::sync::Lazy;
 use crate::gguf::GGUFValueType;
 
-/// Header for quantized formats with common fields
-#[derive(Debug, Clone)]
-pub struct QuantHeader {
-    /// Scale factor for dequantization
-    pub scale: f32,
-    /// Minimum value (used in some formats)
-    pub min: Option<f32>,
-    /// Maximum value (used in some formats)
-    pub max: Option<f32>,
-}
 
 /// Trait that all format implementations must implement
 pub trait FormatImpl: Send + Sync + 'static {
@@ -32,11 +22,12 @@ pub trait FormatImpl: Send + Sync + 'static {
     fn gguf_type(&self) -> GGUFValueType;
     
     /// Name of the format
+    #[allow(unused)]
     fn name(&self) -> &'static str;
     
     /// Dequantize the data
     fn dequantize(&self, 
-                data: &[u8], 
+                data: &[u8],    
                 offset: &mut usize, 
                 num_elements: usize, 
                 result: &mut Vec<f32>

@@ -1,9 +1,9 @@
 use std::error::Error;
-use std::sync::Arc;
-use std::collections::HashMap;
+use std::sync::{Arc, Mutex};
 use crate::llm::model::Model;
-use crate::llm::tensor::Tensor;
 use crate::llm::backend::Backend;
+use super::Transformer;
+use super::TensorCache;
 
 /// Handles the forward pass of the neural network for token prediction
 pub struct ForwardPass {
@@ -11,11 +11,18 @@ pub struct ForwardPass {
     model: Arc<Model>,
     /// Maximum context length (adjusted from settings)
     max_context_length: usize,
-    /// Cache for frequently accessed tensors
-    tensor_cache: HashMap<String, Tensor>,
+    /// Tensor cache for loading and storing tensors
+    tensor_cache: Arc<Mutex<TensorCache>>,
     /// Backend for tensor operations
     backend: Arc<Box<dyn Backend>>,
+    /// Transformer for processing through layers
+    transformer: Transformer,
 }
+
+// Constants for tensor names
+const TOKEN_EMBEDDING_TENSOR: &str = "token_embd.weight";
+const OUTPUT_NORM_TENSOR: &str = "output_norm.weight";
+const OUTPUT_TENSOR: &str = "output.weight";
 
 impl ForwardPass {
     /// Creates a new ForwardPass instance
@@ -40,14 +47,29 @@ impl ForwardPass {
         
         println!("Using max_context_length: {}", max_context_length);
         
-        // Initialize empty tensor cache
-        let tensor_cache = HashMap::new();
+        // Initialize tensor cache and wrap it in Arc<Mutex<_>>
+        let tensor_cache = TensorCache::new(Arc::clone(&model), Arc::clone(&backend));
+        let shared_cache = Arc::new(Mutex::new(tensor_cache));
+        
+        // Create transformer with shared tensor cache
+        let transformer = Transformer::new(
+            Arc::clone(&model),
+            Arc::clone(&backend),
+            model.params.block_count,
+            model.params.hidden_dim,
+            model.params.head_count,
+            model.params.head_count_kv,
+            model.params.feed_forward_length,
+            model.params.layer_norm_rms_epsilon,
+            Arc::clone(&shared_cache),
+        );
         
         let mut forward_pass = Self {
             model,
             max_context_length,
-            tensor_cache,
+            tensor_cache: shared_cache,
             backend,
+            transformer,
         };
         
         // Preload global tensors used in every forward pass
@@ -67,66 +89,21 @@ impl ForwardPass {
         // List of global tensors to preload
         let global_tensors = [
             // Token embedding table - needed for token embedding lookup (first step)
-            "token_embd.weight",
+            TOKEN_EMBEDDING_TENSOR,
             // Output normalization - used in the final layer (before logits)
-            "output_norm.weight", 
+            OUTPUT_NORM_TENSOR, 
             // Output projection - used for final logits (last step)
-            "output.weight",  
+            OUTPUT_TENSOR,  
         ];
         
-        // Count of successfully loaded tensors
-        let mut loaded_count = 0;
+        // Get mutable access to tensor cache
+        let mut tensor_cache = self.tensor_cache.lock()
+            .expect("Failed to lock tensor cache during preloading");
         
-        for &tensor_name in &global_tensors {
-            match self.load_tensor(tensor_name) {
-                Ok(_) => {
-                    loaded_count += 1;
-                },
-                Err(e) => {
-                    println!("Warning: Failed to preload global tensor '{}': {}", tensor_name, e);
-                }
-            }
-        }
+        // Preload tensors using the tensor cache
+        let (loaded_count, total_count) = tensor_cache.preload(&global_tensors);
         
-        println!("Preloaded {}/{} global tensors", loaded_count, global_tensors.len());
-    }
-    
-    /// Load a tensor from cache or from memory map
-    fn load_tensor(&mut self, tensor_name: &str) -> Result<&Tensor, Box<dyn Error + Send + Sync>> {
-        // Return from cache if already loaded
-        if self.tensor_cache.contains_key(tensor_name) {
-            return Ok(&self.tensor_cache[tensor_name]);
-        }
-        
-        // Find the tensor info in the model
-        let tensor_info = self.model.tensors.iter()
-            .find(|t| t.name == tensor_name)
-            .ok_or_else(|| format!("Tensor '{}' not found in model", tensor_name))?;
-            
-        // Print tensor information directly from TensorInfo
-        println!("Loading tensor: {}", tensor_name);
-        println!("  - Dimensions: {:?}", tensor_info.dims);
-        println!("  - Type: {:?}", tensor_info.data_type);
-        println!("  - Offset: {}", tensor_info.offset);
-                
-        // Load the actual tensor data from the model's memory map
-        println!("  - Reading tensor data from memory map...");
-        let start_time = std::time::Instant::now();
-        
-        // Create the tensor directly from the tensor info and raw model data
-        let tensor = Tensor::new(
-            self.model.raw_data(),
-            tensor_info,
-            Arc::clone(&self.backend)
-        )?;
-        
-        let duration = start_time.elapsed();
-        println!("  - Loaded tensor in {:.2?}", duration);
-        
-        // Store in cache
-        self.tensor_cache.insert(tensor_name.to_string(), tensor);
-        
-        Ok(&self.tensor_cache[tensor_name])
+        println!("Preloaded {}/{} global tensors", loaded_count, total_count);
     }
     
     /// Convert token IDs to embeddings by looking up in the embedding table
@@ -134,26 +111,22 @@ impl ForwardPass {
     /// This is the first step in the forward pass.
     /// 
     /// # Arguments
-    /// * `tokens` - The input token IDs
+    /// * `tokens` - The input token IDs (already limited to context window)
     /// 
     /// # Returns
     /// * `Ok(Vec<Vec<f32>>)` - A sequence of embeddings, one for each token
     pub fn tokens_to_embeddings(&mut self, tokens: &[u32]) -> Result<Vec<Vec<f32>>, Box<dyn Error + Send + Sync>> {
-        // First, limit sequence length to maximum context length
-        let max_context_length = self.max_context_length;
         let hidden_dim = self.model.params.hidden_dim;
         let vocab_size = self.model.params.vocab_size;
         
-        let tokens = if tokens.len() > max_context_length {
-            &tokens[tokens.len() - max_context_length..]
-        } else {
-            tokens
-        };
-        
         println!("Converting {} tokens to embeddings", tokens.len());
         
-        // Now load the embedding table
-        let embedding_table = self.load_tensor("token_embd.weight")?;
+        // Get access to tensor cache
+        let mut tensor_cache = self.tensor_cache.lock()
+            .map_err(|e| format!("Failed to lock tensor cache: {}", e))?;
+        
+        // Load the embedding table tensor
+        let embedding_table = tensor_cache.get(TOKEN_EMBEDDING_TENSOR)?;
         let embedding_data = embedding_table.data();
         
         // Lookup embeddings for each token
@@ -179,11 +152,28 @@ impl ForwardPass {
         
         Ok(embeddings)
     }
+
     
     /// Predicts the next token given the current context
-    pub fn predict_next_token(&mut self, tokens: &[u32]) -> Result<u32, Box<dyn Error + Send + Sync>> {
-        // Placeholder implementation
-        // Will integrate tokens_to_embeddings in next step
+    pub fn predict_next_token(&mut self, tokens: &[u32]) -> Result<u32, Box<dyn Error + Send + Sync>> {        
+        // Step 1: Convert tokens to embeddings
+        let embeddings = self.tokens_to_embeddings(tokens)?;
+        
+        // Check if we have embeddings
+        if embeddings.is_empty() {
+            return Err("No embeddings generated from tokens".into());
+        }
+        
+        // Step 2: Process embeddings through transformer blocks
+        println!("Processing embeddings through transformer blocks");
+        
+        // The transformer now accesses the shared tensor cache
+        let transformer_output = self.transformer.forward(&embeddings)?;
+        
+        println!("Processed {} embeddings through transformer", transformer_output.len());
+        
+        // For now, just return a placeholder token
+        println!("Using placeholder token 111 for now");
         let next_token = 111;
         
         Ok(next_token)
