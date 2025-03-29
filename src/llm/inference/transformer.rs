@@ -88,10 +88,10 @@ impl Transformer {
             .map_err(|e| format!("Failed to lock tensor cache: {}", e))?;
         
         // Handle the case where there are no blocks
-        if self.block_count == 0 {
-            println!("No transformer blocks to process");
-            return Ok(embeddings_tensor.clone());
-        }
+        // if self.block_count == 0 {
+        //     println!("No transformer blocks to process");
+        //     return Ok(embeddings_tensor.clone());
+        // }
         
         // For the first block, process the input tensor directly
         // for memory efficiency and so that we do not need to clone
@@ -129,11 +129,25 @@ impl Transformer {
 
         // 3. Apply the attention layer
         println!("  Applying attention layer");
+        let query_projection = self.query_projection(&normalized_state, block_idx, tensor_cache)?;
         
-        // 3. In a full implementation, we would then:
-        //    - Apply self-attention
-        //    - Apply feed-forward network
-        //    - Add residual connections
+        // Print a sample of the query projection tensor for debugging
+        let shape = query_projection.shape();
+        println!("  Query projection shape: {:?}", shape);
+        
+        // Get a small sample of the query projection tensor (first few values)
+        let sample_size = 5.min(query_projection.data().len());
+        let sample = &query_projection.data()[..sample_size];
+        println!("  Query projection sample: {:?}", sample);
+        
+        // Calculate and print some statistics about the query projection
+        if !sample.is_empty() {
+            let min = sample.iter().fold(f32::INFINITY, |a, &b| a.min(b));
+            let max = sample.iter().fold(f32::NEG_INFINITY, |a, &b| a.max(b));
+            let sum: f32 = sample.iter().sum();
+            let avg = sum / sample.len() as f32;
+            println!("  Query projection stats - min: {:.4}, max: {:.4}, avg: {:.4}", min, max, avg);
+        }
         
         // For now, just return the normalized states
         println!("  Block {} processing complete", block_idx + 1);
@@ -161,28 +175,9 @@ impl Transformer {
         let shape = input_tensor.shape();
         let seq_len = shape[0];
         let hidden_dim = shape[1];
-        
-        println!("RMS Norm Debug:");
-        println!("  Input tensor shape: {:?}", shape); // First one is actually embedding tensor
-        println!("  Norm weights tensor shape: {:?}", norm_weights.shape());
-        println!("  Seq len: {}, Hidden dim: {}", seq_len, hidden_dim);
-        println!("  Epsilon: {}", self.layer_norm_epsilon);
-        
-        // Print some sample values from input and norm weights
-        println!("  Sample input values (first row):");
-        let input_data = input_tensor.data();
-        for i in 0..std::cmp::min(5, hidden_dim) {
-            println!("    input[0,{}] = {}", i, input_data[i]);
-        }
-        
-        println!("  Sample norm weight values:");
-        let norm_weights_data = norm_weights.data();
-        for i in 0..std::cmp::min(5, hidden_dim) {
-            println!("    norm_weights[{}] = {}", i, norm_weights_data[i]);
-        }
-        
+                
         // Create output tensor with same shape as the embeddings tensor
-        let mut result = Tensor::zeros(shape.to_vec(), Arc::clone(&self.backend));
+        let mut result = Tensor::zeros(shape.to_vec(), Arc::clone(&self.backend))?;
         
         // Use the backend's rms_norm implementation because it is optimized
         self.backend.rms_norm(
@@ -193,13 +188,6 @@ impl Transformer {
             hidden_dim,
             self.layer_norm_epsilon,
         )?;
-        
-        // Print some sample values from the result
-        println!("  Sample result values (first row):");
-        let result_data = result.data();
-        for i in 0..std::cmp::min(5, hidden_dim) {
-            println!("    result[0,{}] = {}", i, result_data[i]);
-        }
         
         Ok(result)
     }
@@ -228,20 +216,25 @@ impl Transformer {
         let q_weight_name = format!("blk.{}.attn_q.weight", block_idx);
         let q_bias_name = format!("blk.{}.attn_q.bias", block_idx);
         
+        println!("Query projection shapes:");
+        println!("  normalized_input shape: {:?}", normalized_input.shape());
+        
         // Load weights first
         let q_weight: &Tensor = tensor_cache.get(&q_weight_name)
             .map_err(|e| format!("Failed to load query weights for block {}: {}", block_idx, e))?;
+        println!("  q_weight shape: {:?}", q_weight.shape());
         
         // Perform matrix multiplication: X * W_q^T
-        // We transpose W_q to match the dimensions for multiplication
         let mut query = matmul(normalized_input, q_weight, false, true)?;
+        println!("  query after matmul shape: {:?}", query.shape());
         
         // Load bias and add it: (X * W_q^T) + b_q
         let q_bias: &Tensor = tensor_cache.get(&q_bias_name)
             .map_err(|e| format!("Failed to load query bias for block {}: {}", block_idx, e))?;
+        println!("  q_bias shape: {:?}", q_bias.shape());
         
-        // The bias will be broadcasted to match the shape of the query tensor
         query = add(&query, q_bias)?;
+        println!("  final query shape: {:?}", query.shape());
         
         Ok(query)
     }

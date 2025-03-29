@@ -5,8 +5,28 @@ use std::sync::Arc;
 use super::cpu::CpuBackend;
 use crate::gguf::GGUFValueType;
 
+/// Trait for backend-specific memory management
+pub trait BackendMemory: Send + Sync {
+    fn as_slice(&self) -> &[f32];
+    fn as_mut_slice(&mut self) -> &mut [f32];
+    fn to_cpu(&self) -> Vec<f32>;  // For when we need CPU data
+}
+
 /// A trait for tensor operation backends
 pub trait Backend: Send + Sync + Debug {
+    /// Allocate memory for a tensor in the backend's memory space
+    fn allocate_memory(&self, size: usize) -> Result<Box<dyn BackendMemory>, Box<dyn Error + Send + Sync>>;
+    
+    /// Dequantize data directly into backend memory
+    fn dequantize_to_memory(
+        &self,
+        data: &[u8],
+        offset: usize,
+        total_elements: usize,
+        data_type: GGUFValueType,
+        memory: &mut Box<dyn BackendMemory>
+    ) -> Result<(), Box<dyn Error + Send + Sync>>;
+
     /// Perform matrix multiplication C = A * B
     /// 
     /// # Parameters

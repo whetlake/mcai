@@ -1,10 +1,32 @@
 use std::error::Error;
 use std::fmt;
 use ndarray::{Array, Array1, Array2, ArrayView1, s};
+use std::sync::Arc;
 
-use super::super::Backend;
+use super::super::backend::{Backend, BackendMemory};
 use super::quants::dequantize::Dequantizer;
 use crate::gguf::GGUFValueType;
+use crate::llm::tensor::Tensor;
+use crate::gguf::TensorInfo;
+
+/// CPU-specific memory implementation
+pub struct CpuMemory {
+    data: Vec<f32>,
+}
+
+impl BackendMemory for CpuMemory {
+    fn as_slice(&self) -> &[f32] {
+        &self.data
+    }
+    
+    fn as_mut_slice(&mut self) -> &mut [f32] {
+        &mut self.data
+    }
+    
+    fn to_cpu(&self) -> Vec<f32> {
+        self.data.clone()
+    }
+}
 
 /// CPU backend implementation using ndarray
 #[derive(Clone)]
@@ -26,6 +48,29 @@ impl fmt::Debug for CpuBackend {
 }
 
 impl Backend for CpuBackend {
+    fn allocate_memory(&self, size: usize) -> Result<Box<dyn BackendMemory>, Box<dyn Error + Send + Sync>> {
+        Ok(Box::new(CpuMemory {
+            data: vec![0.0; size]
+        }))
+    }
+
+    fn dequantize_to_memory(
+        &self,
+        data: &[u8],
+        offset: usize,
+        total_elements: usize,
+        data_type: GGUFValueType,
+        memory: &mut Box<dyn BackendMemory>
+    ) -> Result<(), Box<dyn Error + Send + Sync>> {
+        // Dequantize into a temporary vector first
+        let dequantized_data = self.dequantize(data, offset, total_elements, data_type)?;
+        
+        // Copy the dequantized data into the backend memory
+        memory.as_mut_slice().copy_from_slice(&dequantized_data);
+        
+        Ok(())
+    }
+
     /// Performs matrix multiplication C = A * B using ndarray.
     ///
     /// # Parameters
@@ -65,13 +110,12 @@ impl Backend for CpuBackend {
         Ok(())
     }
 
-    /// Performs element-wise addition C = A + B.
+    /// Performs element-wise addition C = A + B with broadcasting support
     ///
     /// # Parameters
-    /// * `a` - First input tensor
-    /// * `b` - Second input tensor
+    /// * `a` - First input tensor (can be matrix)
+    /// * `b` - Second input tensor (can be vector)
     /// * `c` - Output tensor
-    /// * `len` - Number of elements in each tensor
     fn add(
         &self,
         a: &[f32],
@@ -82,7 +126,7 @@ impl Backend for CpuBackend {
         let a_array = ArrayView1::from(a);
         let b_array = ArrayView1::from(b);
         
-        // Perform addition
+        // Perform addition (ndarray will handle broadcasting automatically)
         let result = &a_array + &b_array;
         
         // Copy result to output buffer
@@ -223,9 +267,7 @@ impl Backend for CpuBackend {
         let b_array = ArrayView1::from(b);
         
         // Calculate dot product
-        let result = a_array.dot(&b_array);
-        
-        Ok(result)
+        Ok(a_array.dot(&b_array))
     }
 
     /// Dequantizes tensor data from its compressed format to f32 values

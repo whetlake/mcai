@@ -132,7 +132,7 @@ impl ForwardPass {
         let embedding_data = embedding_table.data();
         
         // Create a tensor to hold all embeddings with shape [seq_len, hidden_dim]
-        let mut embeddings_tensor = Tensor::zeros(vec![seq_len, hidden_dim], Arc::clone(&self.backend));
+        let mut embeddings_tensor = Tensor::zeros(vec![seq_len, hidden_dim], Arc::clone(&self.backend))?;
         
         // Lookup embeddings for each token and copy to the embeddings tensor
         for (i, &token_id) in tokens.iter().enumerate() {

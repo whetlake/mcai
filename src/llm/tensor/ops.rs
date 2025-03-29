@@ -19,13 +19,13 @@ pub fn mul(a: &Tensor, b: &Tensor) -> Result<Tensor, Box<dyn Error + Send + Sync
     }
     
     // Create output tensor
-    let mut result = Tensor::zeros(a.shape().to_vec(), Arc::clone(a.backend()));
+    let mut result = Tensor::zeros(a.shape().to_vec(), Arc::clone(a.backend()))?;
     
     // Call backend mul implementation
     a.backend().mul(
         a.data(),
         b.data(),
-        &mut result.data_mut(),
+        result.data_mut(),
     )?;
     
     Ok(result)
@@ -60,13 +60,13 @@ pub fn matmul(a: &Tensor, b: &Tensor, transpose_a: bool, transpose_b: bool) -> R
     let mut result_shape = a.shape().to_vec();
     let last_idx = result_shape.len() - 1;
     result_shape[last_idx] = n;
-    let mut result = Tensor::zeros(result_shape, Arc::clone(a.backend()));
+    let mut result = Tensor::zeros(result_shape, Arc::clone(a.backend()))?;
     
     // Call backend matmul implementation
     a.backend().matmul(
         a.data(),
         b.data(),
-        &mut result.data_mut(),
+        result.data_mut(),
         m,
         n,
         k,
@@ -77,7 +77,7 @@ pub fn matmul(a: &Tensor, b: &Tensor, transpose_a: bool, transpose_b: bool) -> R
     Ok(result)
 }
 
-/// Add two tensors element-wise
+/// Add two tensors element-wise with broadcasting support
 ///
 /// # Arguments
 /// * `a` - First tensor
@@ -86,23 +86,42 @@ pub fn matmul(a: &Tensor, b: &Tensor, transpose_a: bool, transpose_b: bool) -> R
 /// # Returns
 /// * `Result<Tensor, Box<dyn Error + Send + Sync>>` - Result of element-wise addition
 pub fn add(a: &Tensor, b: &Tensor) -> Result<Tensor, Box<dyn Error + Send + Sync>> {
-    // Check that shapes are compatible for addition
-    if a.shape() != b.shape() {
-        return Err(format!("Incompatible shapes for addition: {:?} and {:?}",
-                          a.shape(), b.shape()).into());
+    // Get shapes
+    let a_shape = a.shape();
+    let b_shape = b.shape();
+    
+    // Handle broadcasting for vector to matrix addition
+    if a_shape.len() == 2 && b_shape.len() == 1 {
+        // If a is [seq_len, hidden_dim] and b is [hidden_dim]
+        if a_shape[1] == b_shape[0] {
+            // Create output tensor with same shape as a
+            let mut result = Tensor::zeros(a_shape.to_vec(), Arc::clone(a.backend()))?;
+            
+            // Call backend add implementation
+            a.backend().add(
+                a.data(),
+                b.data(),
+                result.data_mut(),
+            )?;
+            
+            return Ok(result);
+        }
     }
     
-    // Create output tensor
-    let mut result = Tensor::zeros(a.shape().to_vec(), Arc::clone(a.backend()));
+    // For same shape tensors, perform regular addition
+    if a_shape == b_shape {
+        let mut result = Tensor::zeros(a_shape.to_vec(), Arc::clone(a.backend()))?;
+        a.backend().add(
+            a.data(),
+            b.data(),
+            result.data_mut(),
+        )?;
+        return Ok(result);
+    }
     
-    // Call backend add implementation
-    a.backend().add(
-        a.data(),
-        b.data(),
-        &mut result.data_mut(),
-    )?;
-    
-    Ok(result)
+    // If shapes are incompatible, return error
+    Err(format!("Incompatible shapes for addition: {:?} and {:?}",
+                a_shape, b_shape).into())
 }
 
 /// Calculate dot product of two 1D tensors
