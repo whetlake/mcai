@@ -72,6 +72,9 @@ impl InferenceContext {
         // Step 4: Decode response
         let response = self.tokenizer.decode(&response_tokens)?;
 
+        println!("Input tokens: {:?}", input_tokens);
+        println!("Response output: {}", response);
+
         
         Ok(response)
     }
@@ -99,9 +102,16 @@ impl InferenceContext {
         let eos_token_id = self.tokenizer.get_eos_token_id();
         
         // Generate tokens until we hit max_tokens or EOS
-        while generated_tokens.len() < self.max_tokens {
+        let max_predictions = 10;  // Limit to 10 predictions for testing
+        eprintln!("\n=== Starting Token Generation ===");
+        eprintln!("Initial context: {:?}", current_context);
+        
+        while generated_tokens.len() < max_predictions {
+            eprintln!("\nGenerating token {}/{}", generated_tokens.len() + 1, max_predictions);
+            
             // Get next token prediction
             let next_token = self.predict_next_token(&current_context)?;
+            eprintln!("Predicted token: {}", next_token);
             
             // Add to generated tokens
             generated_tokens.push(next_token);
@@ -111,9 +121,14 @@ impl InferenceContext {
             
             // Check for EOS token
             if next_token == eos_token_id {
+                eprintln!("EOS token detected, stopping generation");
                 break;
             }
         }
+        
+        eprintln!("\n=== Token Generation Complete ===");
+        eprintln!("Generated {} tokens", generated_tokens.len());
+        eprintln!("Final context: {:?}", current_context);
         
         Ok(generated_tokens)
     }

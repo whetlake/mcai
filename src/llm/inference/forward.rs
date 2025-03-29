@@ -4,6 +4,7 @@ use crate::llm::model::Model;
 use crate::llm::backend::Backend;
 use super::Transformer;
 use super::TensorCache;
+use crate::llm::tensor::Tensor;
 
 /// Handles the forward pass of the neural network for token prediction
 pub struct ForwardPass {
@@ -114,25 +115,27 @@ impl ForwardPass {
     /// * `tokens` - The input token IDs (already limited to context window)
     /// 
     /// # Returns
-    /// * `Ok(Vec<Vec<f32>>)` - A sequence of embeddings, one for each token
-    pub fn tokens_to_embeddings(&mut self, tokens: &[u32]) -> Result<Vec<Vec<f32>>, Box<dyn Error + Send + Sync>> {
+    /// * `Result<Tensor, Box<dyn Error + Send + Sync>>` - A tensor of shape [seq_len, hidden_dim] containing all token embeddings
+    pub fn tokens_to_embeddings(&mut self, tokens: &[u32]) -> Result<Tensor, Box<dyn Error + Send + Sync>> {
         let hidden_dim = self.model.params.hidden_dim;
         let vocab_size = self.model.params.vocab_size;
+        let seq_len = tokens.len();
         
-        println!("Converting {} tokens to embeddings", tokens.len());
+        println!("Converting {} tokens to embeddings", seq_len);
         
         // Get access to tensor cache
         let mut tensor_cache = self.tensor_cache.lock()
             .map_err(|e| format!("Failed to lock tensor cache: {}", e))?;
         
         // Load the embedding table tensor
-        let embedding_table = tensor_cache.get(TOKEN_EMBEDDING_TENSOR)?;
+        let embedding_table = tensor_cache.get( TOKEN_EMBEDDING_TENSOR)?;
         let embedding_data = embedding_table.data();
         
-        // Lookup embeddings for each token
-        let mut embeddings = Vec::with_capacity(tokens.len());
+        // Create a tensor to hold all embeddings with shape [seq_len, hidden_dim]
+        let mut embeddings_tensor = Tensor::zeros(vec![seq_len, hidden_dim], Arc::clone(&self.backend));
         
-        for &token_id in tokens {
+        // Lookup embeddings for each token and copy to the embeddings tensor
+        for (i, &token_id) in tokens.iter().enumerate() {
             let token_id = token_id as usize;
             
             // Check token ID is within range
@@ -145,37 +148,47 @@ impl ForwardPass {
             let start_idx = token_id * hidden_dim;
             let end_idx = start_idx + hidden_dim;
             
-            // Copy the embedding from the embedding table
-            let token_embedding = embedding_data[start_idx..end_idx].to_vec();
-            embeddings.push(token_embedding);
+            // Copy the embedding from the embedding table to the embeddings tensor using slices
+            let embed_start = i * hidden_dim;
+            let embed_end = embed_start + hidden_dim;
+            embeddings_tensor.data_mut()[embed_start..embed_end].copy_from_slice(&embedding_data[start_idx..end_idx]);
         }
         
-        Ok(embeddings)
+        Ok(embeddings_tensor)
     }
 
     
     /// Predicts the next token given the current context
-    pub fn predict_next_token(&mut self, tokens: &[u32]) -> Result<u32, Box<dyn Error + Send + Sync>> {        
-        // Step 1: Convert tokens to embeddings
-        let embeddings = self.tokens_to_embeddings(tokens)?;
-        
-        // Check if we have embeddings
-        if embeddings.is_empty() {
-            return Err("No embeddings generated from tokens".into());
+    pub fn predict_next_token(&mut self, tokens: &[u32]) -> Result<u32, Box<dyn Error + Send + Sync>> {  
+        // Check if we have tokens to process
+        if tokens.is_empty() {
+            return Err("No tokens provided for prediction".into());
         }
+
+        eprintln!("\n=== Starting Token Prediction ===");
+        eprintln!("Input tokens: {:?}", tokens);
+
+        // Step 1: Convert tokens to embeddings tensor
+        eprintln!("Converting tokens to embeddings...");
+        let embeddings = self.tokens_to_embeddings(tokens)?;
+        eprintln!("Embeddings tensor shape: {:?}", embeddings.shape());
         
         // Step 2: Process embeddings through transformer blocks
-        println!("Processing embeddings through transformer blocks");
-        
-        // The transformer now accesses the shared tensor cache
+        eprintln!("Processing embeddings through transformer blocks...");
         let transformer_output = self.transformer.forward(&embeddings)?;
-        
-        println!("Processed {} embeddings through transformer", transformer_output.len());
+        eprintln!("Transformer output shape: {:?}", transformer_output.shape());
         
         // For now, just return a placeholder token
-        println!("Using placeholder token 111 for now");
-        let next_token = 111;
+        // In a real implementation, we would:
+        // 1. Apply output normalization
+        // 2. Project to vocabulary size
+        // 3. Apply softmax
+        // 4. Sample from the distribution
+        eprintln!("Using placeholder token 111 for now");
         
-        Ok(next_token)
+        eprintln!("=== Token Prediction Complete ===\n");
+
+        // Return the last token from input as a placeholder
+        Ok(tokens[tokens.len() - 1])
     }
 }

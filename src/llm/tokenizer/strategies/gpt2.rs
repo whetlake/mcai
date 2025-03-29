@@ -213,24 +213,26 @@ impl TokenizerStrategy for GPT2Tokenizer {
 
     fn decode(&self, tokens: &[u32]) -> Result<String, Box<dyn Error + Send + Sync>> {
         let mut text = String::new();
-        let mut skip_next_space = false;
         
-        for (i, &token_id) in tokens.iter().enumerate() {
+        for &token_id in tokens {
             // Skip special tokens
-            if token_id == self.config.bos_token_id || token_id == self.config.eos_token_id {
+            if token_id == self.config.bos_token_id || 
+               token_id == self.config.eos_token_id || 
+               token_id == self.config.padding_token_id {
                 continue;
             }
             
+            // Get the token text from reverse vocabulary
             if let Some(token_text) = self.reverse_vocabulary.get(&token_id) {
-                // Handle spacing
-                if i > 0 && !skip_next_space && !text.ends_with(' ') {
+                // Handle special cases for spacing
+                if !text.is_empty() && !token_text.starts_with(' ') && !text.ends_with(' ') {
                     text.push(' ');
                 }
                 
+                // Add the token text
                 text.push_str(token_text);
-                
-                // Check if we should skip the next space
-                skip_next_space = token_text.ends_with(|c: char| c.is_ascii_punctuation());
+            } else {
+                return Err(format!("Unknown token ID: {}", token_id).into());
             }
         }
         

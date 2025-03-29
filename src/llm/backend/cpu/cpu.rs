@@ -1,6 +1,6 @@
 use std::error::Error;
 use std::fmt;
-use ndarray::{Array, Array1, Array2, ArrayView1};
+use ndarray::{Array, Array1, Array2, ArrayView1, s};
 
 use super::super::Backend;
 use super::quants::dequantize::Dequantizer;
@@ -120,15 +120,21 @@ impl Backend for CpuBackend {
     /// Applies RMS normalization to a tensor.
     ///
     /// # Parameters
-    /// * `x` - Input tensor
-    /// * `weight` - Scale factors for each hidden dimension
-    /// * `output` - Output tensor
+    /// * `x` - Input tensor of shape [size, hidden_size]
+    /// * `weight` - Scale factors of shape [hidden_size]
+    /// * `output` - Output tensor of shape [size, hidden_size]
     /// * `size` - Number of sequences/rows
     /// * `hidden_size` - Size of hidden dimension
-    /// * `eps` - Small constant for numerical stability
+    /// * `eps` - Small constant for numerical stability (typically 1e-5)
+    ///
+    /// # Process
+    /// For each row (token embedding):
+    /// 1. Calculate RMS: sqrt(mean(x²))
+    /// 2. Normalize: x / (RMS + eps)
+    /// 3. Scale: normalized * weight
     fn rms_norm(
         &self,
-        x: &[f32],
+        x: &[f32], // Input tensor of shape [size, hidden_size]
         weight: &[f32],
         output: &mut [f32],
         size: usize,
@@ -142,18 +148,17 @@ impl Backend for CpuBackend {
         // Create output array
         let mut result = Array::zeros((size, hidden_size));
         
-        // Apply RMS normalization row by row
+        // Process each row seperately or each token separately
         for (i, row) in x_array.outer_iter().enumerate() {
-            // Calculate sum of squares
-            let ss: f32 = row.iter().map(|&v| v * v).sum();
+            // Step 1: Calculate RMS
+            // Square each element and take mean
+            let mean_square = row.iter().map(|&v| v * v).sum::<f32>() / hidden_size as f32;
+            let rms = mean_square.sqrt() + eps;  // Add epsilon after square root
             
-            // Calculate normalization factor
-            let norm_factor = 1.0 / (ss / hidden_size as f32 + eps).sqrt();
-            
-            // Normalize and scale with weights
-            for j in 0..hidden_size {
-                result[[i, j]] = norm_factor * row[j] * weight_array[j];
-            }
+            // Step 2 & 3: Normalize and scale using ndarray operations
+            let mut normalized = row.to_owned();
+            normalized /= rms;
+            result.slice_mut(s![i, ..]).assign(&(normalized * &weight_array));
         }
         
         // Copy result to output buffer

@@ -2,7 +2,9 @@ use std::error::Error;
 use std::sync::{Arc, Mutex};
 use crate::llm::model::Model;
 use crate::llm::backend::Backend;
+use crate::llm::tensor::{Tensor, mul, matmul, add};
 use super::TensorCache;
+
 
 /// Represents a transformer block in the model.
 ///
@@ -56,110 +58,191 @@ impl Transformer {
         }
     }
     
-    /// Apply RMS normalization to a vector
-    fn rms_norm(&self, input: &[f32], norm_weights: &[f32]) -> Vec<f32> {
-        let hidden_dim = input.len();
-        
-        // Calculate sum of squares
-        let mut sum_squares = 0.0;
-        for &val in input {
-            sum_squares += val * val;
-        }
-        
-        // Calculate RMS
-        let rms = (sum_squares / hidden_dim as f32 + self.layer_norm_epsilon).sqrt();
-        
-        // Apply normalization with weights
-        let mut output = vec![0.0; hidden_dim];
-        for i in 0..hidden_dim {
-            output[i] = (input[i] / rms) * norm_weights[i];
-        }
-        
-        output
-    }
-    
     /// Process a sequence through all transformer blocks
     /// 
     /// # Arguments
-    /// * `embeddings` - The input embeddings for the sequence of tokens
+    /// * `embeddings_tensor` - The input embeddings tensor with shape [seq_len, hidden_dim]
     /// 
     /// # Returns
-    /// * `Vec<Vec<f32>>` - The processed hidden states
-    pub fn forward(&self, embeddings: &[Vec<f32>]) 
-        -> Result<Vec<Vec<f32>>, Box<dyn Error + Send + Sync>>
+    /// * `Result<Tensor, Box<dyn Error + Send + Sync>>` - The processed hidden states tensor
+    pub fn forward(&self, embeddings_tensor: &Tensor) 
+        -> Result<Tensor, Box<dyn Error + Send + Sync>>
     {
-        println!("Transformer forward pass with {} embeddings", embeddings.len());
+        // Check that the tensor has the expected shape [seq_len, hidden_dim]
+        let shape = embeddings_tensor.shape();
+        if shape.len() != 2 {
+            return Err(format!("Expected embeddings tensor with 2 dimensions, got shape: {:?}", shape).into());
+        }
         
-        // Get the tensor cache safely using the mutex
+        // Check that the hidden dimensions match the model's hidden dimension
+        // in the model parameters
+        let hidden_dim = shape[1];
+        if hidden_dim != self.hidden_dim {
+            return Err(format!("Expected hidden dimension {}, got {}", self.hidden_dim, hidden_dim).into());
+        }
+        println!("Transformer forward pass with embeddings tensor of shape {:?}", shape);
+        
+        // Get the tensor cache safely using the mutex to be able to
+        // retrieve the relevant tensors from the cache
         let mut tensor_cache = self.tensor_cache.lock()
             .map_err(|e| format!("Failed to lock tensor cache: {}", e))?;
         
-        // Start with the original embeddings
-        let mut hidden_states = embeddings.to_vec();
+        // Handle the case where there are no blocks
+        if self.block_count == 0 {
+            println!("No transformer blocks to process");
+            return Ok(embeddings_tensor.clone());
+        }
         
-        // Iterate through all transformer blocks
-        for block_idx in 0..self.block_count {
-            println!("Processing transformer block {}/{}", block_idx + 1, self.block_count);
-            
-            // Load the normalization weights for this block
-            let attn_norm_tensor_name = format!("blk.{}.attn_norm.weight", block_idx);
-            let attn_norm_data = tensor_cache.get_data(&attn_norm_tensor_name)?;
-            
-            // Apply normalization to each hidden state
-            let mut normalized_states = Vec::with_capacity(hidden_states.len());
-            for state in &hidden_states {
-                let normalized = self.rms_norm(state, &attn_norm_data);
-                normalized_states.push(normalized);
-            }
-            
-            // For now, just use the normalized states as the output
-            // In future steps, we'll add the attention and feed-forward layers
-            hidden_states = normalized_states;
+        // For the first block, process the input tensor directly
+        // for memory efficiency and so that we do not need to clone
+        // the input tensor and can use embeddings_tensor directly
+        let mut current_states = self.process_block(embeddings_tensor, 0, &mut tensor_cache)?;
+        println!("Processed block 1/{}", self.block_count);
+        
+        // Process remaining blocks, using the output of each block as input to the next
+        for block_idx in 1..self.block_count {
+            let next_states = self.process_block(&current_states, block_idx, &mut tensor_cache)?;
+            current_states = next_states;
+            println!("Processed block {}/{}", block_idx + 1, self.block_count);
         }
         
         println!("Completed processing through {} transformer blocks", self.block_count);
-        Ok(hidden_states)
+        Ok(current_states)
     }
     
-    /// Process a sequence through all transformer blocks using an external tensor loader
+    /// Process a single transformer block
+    fn process_block(&self, 
+                     hidden_state: &Tensor, 
+                     block_idx: usize,
+                     tensor_cache: &mut TensorCache) -> Result<Tensor, Box<dyn Error + Send + Sync>> {
+        println!("Processing transformer block {}/{}", block_idx + 1, self.block_count);
+        
+        // 1. Load the normalization weights for this block
+        let attn_norm_tensor_name = format!("blk.{}.attn_norm.weight", block_idx);
+        println!("  Loading tensor: {}", attn_norm_tensor_name);
+        let attn_norm_tensor: &Tensor = tensor_cache.get(&attn_norm_tensor_name)
+            .map_err(|e| format!("Failed to load attention norm weights for block {}: {}", block_idx, e))?;
+        
+        // 2. Apply RMS normalization
+        println!("  Applying RMS normalization");
+        let normalized_state = self.rms_norm(hidden_state, attn_norm_tensor)?;
+
+        // 3. Apply the attention layer
+        println!("  Applying attention layer");
+        
+        // 3. In a full implementation, we would then:
+        //    - Apply self-attention
+        //    - Apply feed-forward network
+        //    - Add residual connections
+        
+        // For now, just return the normalized states
+        println!("  Block {} processing complete", block_idx + 1);
+        Ok(normalized_state)
+    }
+
+    /// Apply RMS normalization to a tensor
+    ///
+    /// RMS (Root Mean Square) normalization is a technique used in transformers
+    /// to normalize the scale of embeddings while preserving their direction.
     /// 
+    /// This function performs the following steps:
+    /// 1. Calculate root mean square (RMS) for each row (token vector)
+    /// 2. Normalize each value by dividing by (RMS + epsilon)
+    /// 3. Scale by element-wise multiplication with norm_weights
+    ///
     /// # Arguments
-    /// * `embeddings` - The input embeddings for the sequence of tokens
-    /// * `load_tensor` - A function to load tensors from cache or model
-    /// 
+    /// * `input` - Embeddings tensor with shape [seq_len, hidden_dim]
+    /// * `norm_weights` - Normalization weights tensor with shape [hidden_dim]
+    ///
     /// # Returns
-    /// * `Vec<Vec<f32>>` - The processed hidden states
-    pub fn forward_with_loader<F>(&self, embeddings: &[Vec<f32>], mut load_tensor: F) 
-        -> Result<Vec<Vec<f32>>, Box<dyn Error + Send + Sync>>
-    where
-        F: FnMut(&str) -> Result<Vec<f32>, Box<dyn Error + Send + Sync>>,
-    {
-        println!("Transformer forward pass with {} embeddings (using external loader)", embeddings.len());
+    /// * Result<Tensor, Box<dyn Error + Send + Sync>> - Normalized tensor
+    fn rms_norm(&self, input_tensor: &Tensor, norm_weights: &Tensor) -> Result<Tensor, Box<dyn Error + Send + Sync>> {
+        // Get shape information
+        let shape = input_tensor.shape();
+        let seq_len = shape[0];
+        let hidden_dim = shape[1];
         
-        // Start with the original embeddings
-        let mut hidden_states = embeddings.to_vec();
+        println!("RMS Norm Debug:");
+        println!("  Input tensor shape: {:?}", shape); // First one is actually embedding tensor
+        println!("  Norm weights tensor shape: {:?}", norm_weights.shape());
+        println!("  Seq len: {}, Hidden dim: {}", seq_len, hidden_dim);
+        println!("  Epsilon: {}", self.layer_norm_epsilon);
         
-        // Iterate through all transformer blocks
-        for block_idx in 0..self.block_count {
-            println!("Processing transformer block {}/{}", block_idx + 1, self.block_count);
-            
-            // Load the normalization weights for this block
-            let attn_norm_tensor_name = format!("blk.{}.attn_norm.weight", block_idx);
-            let attn_norm_data = load_tensor(&attn_norm_tensor_name)?;
-            
-            // Apply normalization to each hidden state
-            let mut normalized_states = Vec::with_capacity(hidden_states.len());
-            for state in &hidden_states {
-                let normalized = self.rms_norm(state, &attn_norm_data);
-                normalized_states.push(normalized);
-            }
-            
-            // For now, just use the normalized states as the output
-            // In future steps, we'll add the attention and feed-forward layers
-            hidden_states = normalized_states;
+        // Print some sample values from input and norm weights
+        println!("  Sample input values (first row):");
+        let input_data = input_tensor.data();
+        for i in 0..std::cmp::min(5, hidden_dim) {
+            println!("    input[0,{}] = {}", i, input_data[i]);
         }
         
-        println!("Completed processing through {} transformer blocks", self.block_count);
-        Ok(hidden_states)
+        println!("  Sample norm weight values:");
+        let norm_weights_data = norm_weights.data();
+        for i in 0..std::cmp::min(5, hidden_dim) {
+            println!("    norm_weights[{}] = {}", i, norm_weights_data[i]);
+        }
+        
+        // Create output tensor with same shape as the embeddings tensor
+        let mut result = Tensor::zeros(shape.to_vec(), Arc::clone(&self.backend));
+        
+        // Use the backend's rms_norm implementation because it is optimized
+        self.backend.rms_norm(
+            input_tensor.data(),
+            norm_weights.data(),
+            result.data_mut(),
+            seq_len,
+            hidden_dim,
+            self.layer_norm_epsilon,
+        )?;
+        
+        // Print some sample values from the result
+        println!("  Sample result values (first row):");
+        let result_data = result.data();
+        for i in 0..std::cmp::min(5, hidden_dim) {
+            println!("    result[0,{}] = {}", i, result_data[i]);
+        }
+        
+        Ok(result)
+    }
+
+    /// Project the normalized input tensor using query weights and bias
+    ///
+    /// This function performs the query projection step in the attention mechanism:
+    /// Q = (X * W_q) + b_q
+    /// where:
+    /// - X is the normalized input tensor [seq_len, hidden_dim]
+    /// - W_q is the query weight matrix [hidden_dim, hidden_dim]
+    /// - b_q is the query bias vector [hidden_dim]
+    ///
+    /// # Arguments
+    /// * `normalized_input` - The normalized input tensor with shape [seq_len, hidden_dim]
+    /// * `block_idx` - The index of the current transformer block
+    /// * `tensor_cache` - Reference to the tensor cache for loading weights
+    ///
+    /// # Returns
+    /// * Result<Tensor, Box<dyn Error + Send + Sync>> - The projected query tensor
+    fn query_projection(&self, 
+                       normalized_input: &Tensor,
+                       block_idx: usize,
+                       tensor_cache: &mut TensorCache) -> Result<Tensor, Box<dyn Error + Send + Sync>> {
+        // Load query weights and bias for this block
+        let q_weight_name = format!("blk.{}.attn_q.weight", block_idx);
+        let q_bias_name = format!("blk.{}.attn_q.bias", block_idx);
+        
+        // Load weights first
+        let q_weight: &Tensor = tensor_cache.get(&q_weight_name)
+            .map_err(|e| format!("Failed to load query weights for block {}: {}", block_idx, e))?;
+        
+        // Perform matrix multiplication: X * W_q^T
+        // We transpose W_q to match the dimensions for multiplication
+        let mut query = matmul(normalized_input, q_weight, false, true)?;
+        
+        // Load bias and add it: (X * W_q^T) + b_q
+        let q_bias: &Tensor = tensor_cache.get(&q_bias_name)
+            .map_err(|e| format!("Failed to load query bias for block {}: {}", block_idx, e))?;
+        
+        // The bias will be broadcasted to match the shape of the query tensor
+        query = add(&query, q_bias)?;
+        
+        Ok(query)
     }
 }
