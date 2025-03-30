@@ -127,28 +127,13 @@ impl Transformer {
         println!("  Applying RMS normalization");
         let normalized_state = self.rms_norm(hidden_state, attn_norm_tensor)?;
 
-        // 3. Apply the attention layer
-        println!("  Applying attention layer");
-        let query_projection = self.query_projection(&normalized_state, block_idx, tensor_cache)?;
-        let key_projection = self.key_projection(&normalized_state, block_idx, tensor_cache)?;
+        // 3. Calculate Q, K, V projections using the unified function
+        println!("  Applying attention layer projections");
+        let query_projection = self.projection(&normalized_state, block_idx, "q", tensor_cache)?;
+        let key_projection = self.projection(&normalized_state, block_idx, "k", tensor_cache)?;
+        let value_projection = self.projection(&normalized_state, block_idx, "v", tensor_cache)?;
         
-        // Print a sample of the query projection tensor for debugging
-        let shape = query_projection.shape();
-        println!("  Query projection shape: {:?}", shape);
         
-        // Get a small sample of the query projection tensor (first few values)
-        let sample_size = 5.min(query_projection.data().len());
-        let sample = &query_projection.data()[..sample_size];
-        println!("  Query projection sample: {:?}", sample);
-        
-        // Calculate and print some statistics about the query projection
-        if !sample.is_empty() {
-            let min = sample.iter().fold(f32::INFINITY, |a, &b| a.min(b));
-            let max = sample.iter().fold(f32::NEG_INFINITY, |a, &b| a.max(b));
-            let sum: f32 = sample.iter().sum();
-            let avg = sum / sample.len() as f32;
-            println!("  Query projection stats - min: {:.4}, max: {:.4}, avg: {:.4}", min, max, avg);
-        }
         
         // For now, just return the normalized states
         println!("  Block {} processing complete", block_idx + 1);
@@ -193,83 +178,38 @@ impl Transformer {
         Ok(result)
     }
 
-    /// Project the normalized input tensor using query weights and bias
-    ///
-    /// This function performs the query projection step in the attention mechanism:
-    /// Q = (X * W_q) + b_q
-    /// where:
-    /// - X is the normalized input tensor [seq_len, hidden_dim]
-    /// - W_q is the query weight matrix [hidden_dim, hidden_dim]
-    /// - b_q is the query bias vector [hidden_dim]
-    ///
-    /// # Arguments
-    /// * `normalized_input` - The normalized input tensor with shape [seq_len, hidden_dim]
-    /// * `block_idx` - The index of the current transformer block
-    /// * `tensor_cache` - Reference to the tensor cache for loading weights
-    ///
-    /// # Returns
-    /// * Result<Tensor, Box<dyn Error + Send + Sync>> - The projected query tensor
-    fn query_projection(&self, 
-                       normalized_input: &Tensor,
-                       block_idx: usize,
-                       tensor_cache: &mut TensorCache) -> Result<Tensor, Box<dyn Error + Send + Sync>> {
-        // Load query weights and bias for this block
-        let q_weight_name = format!("blk.{}.attn_q.weight", block_idx);
-        let q_bias_name = format!("blk.{}.attn_q.bias", block_idx);
+    /// Generic projection function for Q, K, V
+    fn projection(&self,
+        normalized_input: &Tensor,
+        block_idx: usize,
+        projection_type: &str,
+        tensor_cache: &mut TensorCache)
+        -> Result<Tensor, Box<dyn Error + Send + Sync>>
+    {
+        // Load weights and bias for this block based on projection_type ("q", "k", or "v")
+        let weight_name = format!("blk.{}.attn_{}.weight", block_idx, projection_type);
+        let bias_name = format!("blk.{}.attn_{}.bias", block_idx, projection_type);
         
-        println!("Query projection shapes:");
+        println!("{} projection shapes:", projection_type.to_uppercase());
         println!("  normalized_input shape: {:?}", normalized_input.shape());
         
         // Load weights first
-        let q_weight: &Tensor = tensor_cache.get(&q_weight_name)
-            .map_err(|e: Box<dyn Error + Send + Sync>| format!("Failed to load query weights for block {}: {}", block_idx, e))?;
-        println!("  q_weight shape: {:?}", q_weight.shape());
+        let weight: &Tensor = tensor_cache.get(&weight_name)
+            .map_err(|e: Box<dyn Error + Send + Sync>| format!("Failed to load {} weights for block {}: {}", projection_type, block_idx, e))?;
+        println!("  {} weight shape: {:?}", projection_type, weight.shape());
         
-        // Perform matrix multiplication: X * W_q^T
-        let mut query = matmul(normalized_input, q_weight, false, false)?;
-        println!("  query after matmul shape: {:?}", query.shape());
+        // Perform matrix multiplication: X * W
+        let mut proj_result = matmul(normalized_input, weight, false, false)?;
+        println!("  {} after matmul shape: {:?}", projection_type, proj_result.shape());
         
-        // Load bias and add it: (X * W_q^T) + b_q
-        let q_bias: &Tensor = tensor_cache.get(&q_bias_name)
-            .map_err(|e| format!("Failed to load query bias for block {}: {}", block_idx, e))?;
-        println!("  q_bias shape: {:?}", q_bias.shape());
+        // Load bias and add it: (X * W) + b
+        let bias: &Tensor = tensor_cache.get(&bias_name)
+            .map_err(|e| format!("Failed to load {} bias for block {}: {}", projection_type, block_idx, e))?;
+        println!("  {} bias shape: {:?}", projection_type, bias.shape());
         
-        query = add(&query, q_bias)?;
-        println!("  final query shape: {:?}", query.shape());
+        proj_result = add(&proj_result, bias)?;
+        println!("  final {} shape: {:?}", projection_type, proj_result.shape());
         
-        Ok(query)
-    }
-
-    /// Project the normalized input tensor using key weights and bias
-    /// K = (X * W_k) + b_k
-    fn key_projection(&self, 
-                      normalized_input: &Tensor,
-                      block_idx: usize,
-                      tensor_cache: &mut TensorCache) -> Result<Tensor, Box<dyn Error + Send + Sync>> {
-        // Load key weights and bias for this block
-        let k_weight_name = format!("blk.{}.attn_k.weight", block_idx);
-        let k_bias_name = format!("blk.{}.attn_k.bias", block_idx);
-        
-        println!("Key projection shapes:");
-        println!("  normalized_input shape: {:?}", normalized_input.shape());
-        
-        // Load weights first
-        let k_weight: &Tensor = tensor_cache.get(&k_weight_name)
-            .map_err(|e: Box<dyn Error + Send + Sync>| format!("Failed to load key weights for block {}: {}", block_idx, e))?;
-        println!("  k_weight shape: {:?}", k_weight.shape());
-        
-        // Perform matrix multiplication: X * W_k^T
-        let mut key = matmul(normalized_input, k_weight, false, false)?;
-        println!("  key after matmul shape: {:?}", key.shape());
-        
-        // Load bias and add it: (X * W_k^T) + b_k
-        let k_bias: &Tensor = tensor_cache.get(&k_bias_name)
-            .map_err(|e| format!("Failed to load key bias for block {}: {}", block_idx, e))?;
-        println!("  k_bias shape: {:?}", k_bias.shape());
-        
-        key = add(&key, k_bias)?;
-        println!("  final key shape: {:?}", key.shape());
-        
-        Ok(key)
+        Ok(proj_result)
     }
 }
