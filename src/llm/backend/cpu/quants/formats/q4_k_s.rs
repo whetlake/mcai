@@ -61,12 +61,12 @@ impl FormatImpl for Q4KSFormat {
         let f32_size_mb = (num_elements * 4) as f32 / (1024.0 * 1024.0);
         let compression_ratio = f32_size_mb / actual_size_mb;
         
-        println!("Q4_K_S Format Size Details:");
-        println!("  Number of blocks: {}", num_blocks);
-        println!("  Bytes per block: {} bytes", bytes_per_block);
-        println!("  Total bytes needed: {} ({:.4} MB)", bytes_needed, actual_size_mb);
-        println!("  Equivalent F32 size: {:.4} MB", f32_size_mb);
-        println!("  Compression ratio: {:.2}x", compression_ratio);
+        // println!("Q4_K_S Format Size Details:");
+        // println!("  Number of blocks: {}", num_blocks);
+        // println!("  Bytes per block: {} bytes", bytes_per_block);
+        // println!("  Total bytes needed: {} ({:.4} MB)", bytes_needed, actual_size_mb);
+        // println!("  Equivalent F32 size: {:.4} MB", f32_size_mb);
+        // println!("  Compression ratio: {:.2}x", compression_ratio);
         
         // Ensure we have enough data using utility function
         check_data_availability(data, *offset, bytes_needed, "Q4_K_S")?;

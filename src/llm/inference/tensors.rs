@@ -74,10 +74,8 @@ impl TensorCache {
         println!("Loading tensor: {}", tensor_name);
         println!("  - Dimensions: {:?}", tensor_info.dims);
         println!("  - Type: {:?}", tensor_info.data_type);
-        println!("  - Offset: {}", tensor_info.offset);
                 
         // Load the actual tensor data from the model's memory map
-        println!("  - Reading tensor data from memory map...");
         let start_time = std::time::Instant::now();
         
         // Create the tensor directly from the tensor info and raw model data

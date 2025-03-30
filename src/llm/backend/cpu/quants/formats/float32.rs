@@ -40,9 +40,9 @@ impl FormatImpl for Float32Format {
         // Calculate sizes for reporting
         let actual_size_mb = bytes_needed as f32 / (1024.0 * 1024.0);
         
-        println!("FLOAT32 Format Size Details:");
-        println!("  Total bytes needed: {} ({:.4} MB)", bytes_needed, actual_size_mb);
-        println!("  Compression ratio: 1.00x (uncompressed)");
+        // println!("FLOAT32 Format Size Details:");
+        // println!("  Total bytes needed: {} ({:.4} MB)", bytes_needed, actual_size_mb);
+        // println!("  Compression ratio: 1.00x (uncompressed)");
         
         // Ensure we have enough data using the utility function
         check_data_availability(data, *offset, bytes_needed, "FLOAT32")?;

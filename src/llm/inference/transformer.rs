@@ -129,11 +129,43 @@ impl Transformer {
 
         // 3. Calculate Q, K, V projections using the unified function
         println!("  Applying attention layer projections");
-        let query_projection = self.projection(&normalized_state, block_idx, "q", tensor_cache)?;
-        let key_projection = self.projection(&normalized_state, block_idx, "k", tensor_cache)?;
-        let value_projection = self.projection(&normalized_state, block_idx, "v", tensor_cache)?;
+        let mut query_projection = self.projection(&normalized_state, block_idx, "q", tensor_cache)?;
+        let mut key_projection = self.projection(&normalized_state, block_idx, "k", tensor_cache)?;
+        let mut value_projection = self.projection(&normalized_state, block_idx, "v", tensor_cache)?;
+
+        // Print head counts
+        println!("  Number of Query Heads (head_count): {}", self.head_count);
+        println!("  Number of KV Heads (head_count_kv): {}", self.head_count_kv);
         
+        // --- Multi-Head Attention Steps ---
+        println!("  Reshaping projections for multi-head attention");
         
+        // Get sequence length
+        let seq_len = normalized_state.shape()[0];
+
+        // 1. Reshape Q in place
+        let head_dim = self.hidden_dim / self.head_count;
+        query_projection.reshape_in_place(vec![seq_len, self.head_count, head_dim])?;
+        println!("    Query reshaped: {:?}", query_projection.shape());
+
+        // 2. Reshape K and V in place - Note: they use head_count_kv
+        let k_shape_original = key_projection.shape().to_vec(); // Store original shape if needed later?
+        let kv_dim = k_shape_original[1]; // Dimension of the K projection output
+        if kv_dim % self.head_count_kv != 0 {
+            return Err(format!("KV dimension ({}) is not divisible by KV head count ({})", kv_dim, self.head_count_kv).into());
+        }
+        let kv_head_dim = kv_dim / self.head_count_kv;
+
+        key_projection.reshape_in_place(vec![seq_len, self.head_count_kv, kv_head_dim])?;
+        value_projection.reshape_in_place(vec![seq_len, self.head_count_kv, kv_head_dim])?;
+        println!("    Key reshaped:   {:?}", key_projection.shape());
+        println!("    Value reshaped: {:?}", value_projection.shape());
+
+        // (Attention calculation will follow) ...
+        
+        // --- Example of reshaping back (if needed later) ---
+        // key_projection.reshape_in_place(k_shape_original)?;
+        // println!("    Key reshaped back: {:?}", key_projection.shape());
         
         // For now, just return the normalized states
         println!("  Block {} processing complete", block_idx + 1);

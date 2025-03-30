@@ -89,6 +89,26 @@ impl Tensor {
     pub fn backend(&self) -> &Arc<Box<dyn Backend>> {
         &self.backend
     }
+
+    /// Reshapes the tensor's shape metadata in place.
+    /// Requires the total number of elements to remain the same.
+    /// This operation is very cheap as it does not copy data.
+    pub fn reshape_in_place(&mut self, new_shape: Vec<usize>) -> Result<(), Box<dyn Error + Send + Sync>> {
+        let current_elements: usize = self.shape.iter().product();
+        let new_elements: usize = new_shape.iter().product();
+
+        if current_elements != new_elements {
+            return Err(format!(
+                "Cannot reshape tensor in place with {} elements (shape: {:?}) to {} elements (shape: {:?})",
+                current_elements, self.shape, new_elements, new_shape
+            )
+            .into());
+        }
+
+        // Just update the shape metadata
+        self.shape = new_shape;
+        Ok(())
+    }
 }
 
 impl fmt::Debug for Tensor {
@@ -97,5 +117,23 @@ impl fmt::Debug for Tensor {
             .field("shape", &self.shape)
             .field("name", &self.name)
             .finish()
+    }
+}
+
+impl Clone for Tensor {
+    fn clone(&self) -> Self {
+        let mut memory = self.backend.allocate_memory(self.shape.iter().product())
+            .expect("Failed to allocate memory for tensor clone");
+            
+        // Copy data from original tensor to new memory
+        // Ensure we are using the correct method to access data on BackendMemory
+        memory.as_mut_slice().copy_from_slice(self.memory.as_slice());
+            
+        Self {
+            backend: Arc::clone(&self.backend),
+            memory,
+            shape: self.shape.clone(),
+            name: self.name.clone(),
+        }
     }
 }

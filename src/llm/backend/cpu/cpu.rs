@@ -90,15 +90,15 @@ impl Backend for CpuBackend {
         transpose_a: bool,
         transpose_b: bool,
     ) -> Result<(), Box<dyn Error + Send + Sync>> {
-        println!("Matrix multiplication shapes:");
-        println!("  Matrix A: {}x{}", m, k);
-        println!("  Matrix B: {}x{}", k, n);
-        println!("  Output C: {}x{}", m, n);
-        println!("  Transpose A: {}", transpose_a);
-        println!("  Transpose B: {}", transpose_b);
-        println!("  Input A length: {}", a.len());
-        println!("  Input B length: {}", b.len());
-        println!("  Output C length: {}", c.len());
+        // println!("Matrix multiplication shapes:");
+        // println!("  Matrix A: {}x{}", m, k);
+        // println!("  Matrix B: {}x{}", k, n);
+        // println!("  Output C: {}x{}", m, n);
+        // println!("  Transpose A: {}", transpose_a);
+        // println!("  Transpose B: {}", transpose_b);
+        // println!("  Input A length: {}", a.len());
+        // println!("  Input B length: {}", b.len());
+        // println!("  Output C length: {}", c.len());
 
         // Create ndarray views of the input data
         let a_array = Array2::from_shape_vec((m, k), a.to_vec())?;

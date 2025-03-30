@@ -21,12 +21,7 @@ impl Dequantizer {
         total_elements: usize,
         data_type: GGUFValueType,
     ) -> Result<Vec<f32>, Box<dyn Error + Send + Sync>> {
-        
-        println!("================================================");
-        println!("Dequantizing tensor with data type: {:?}", data_type);
-        println!("Tensor offset in memory map: {} bytes", offset);
-        println!("Elements to dequantize: {}", total_elements);
-        
+                
         // Try to get a format implementation for this data type
         if let Some(format) = get_format_by_gguf_type(data_type) {
             // Use the format implementation to dequantize the data
@@ -44,7 +39,6 @@ impl Dequantizer {
             
             // Report the actual size information
             println!("Dequantization completed in {:.2?}", elapsed);
-            println!("================================================");
             Ok(result)
         } else {
             // No format implementation found for this data type

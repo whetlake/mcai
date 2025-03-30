@@ -41,10 +41,10 @@ impl FormatImpl for Uint8Format {
         let f32_size_mb = (num_elements * 4) as f32 / (1024.0 * 1024.0);
         let compression_ratio = f32_size_mb / actual_size_mb;
         
-        println!("UINT8 Format Size Details:");
-        println!("  Total bytes needed: {} ({:.4} MB)", bytes_needed, actual_size_mb);
-        println!("  Equivalent F32 size: {:.4} MB", f32_size_mb);
-        println!("  Compression ratio: {:.2}x", compression_ratio);
+        // println!("UINT8 Format Size Details:");
+        // println!("  Total bytes needed: {} ({:.4} MB)", bytes_needed, actual_size_mb);
+        // println!("  Equivalent F32 size: {:.4} MB", f32_size_mb);
+        // println!("  Compression ratio: {:.2}x", compression_ratio);
         
         // Ensure we have enough data using the utility function
         check_data_availability(data, *offset, bytes_needed, "UINT8")?;
