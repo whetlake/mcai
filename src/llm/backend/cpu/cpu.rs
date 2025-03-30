@@ -1,6 +1,6 @@
 use std::error::Error;
 use std::fmt;
-use ndarray::{Array, Array1, Array2, ArrayView1, s};
+use ndarray::{Array, Array1, Array2, ArrayView1, ArrayView2, ArrayViewMut2, s};
 use std::sync::Arc;
 
 use super::super::backend::{Backend, BackendMemory};
@@ -93,6 +93,16 @@ impl Backend for CpuBackend {
         transpose_a: bool,
         transpose_b: bool,
     ) -> Result<(), Box<dyn Error + Send + Sync>> {
+        println!("Matrix multiplication shapes:");
+        println!("  Matrix A: {}x{}", m, k);
+        println!("  Matrix B: {}x{}", k, n);
+        println!("  Output C: {}x{}", m, n);
+        println!("  Transpose A: {}", transpose_a);
+        println!("  Transpose B: {}", transpose_b);
+        println!("  Input A length: {}", a.len());
+        println!("  Input B length: {}", b.len());
+        println!("  Output C length: {}", c.len());
+
         // Create ndarray views of the input data
         let a_array = Array2::from_shape_vec((m, k), a.to_vec())?;
         let b_array = Array2::from_shape_vec((k, n), b.to_vec())?;
@@ -104,8 +114,9 @@ impl Backend for CpuBackend {
         // Perform matrix multiplication (this uses BLAS internally if available)
         let result = a_view.dot(&b_view);
         
-        // Copy result to output buffer
-        c.copy_from_slice(result.as_slice().unwrap());
+        // Copy result to output buffer using assign to handle potential non-contiguity
+        let mut c_array = ArrayViewMut2::from_shape((m, n), c)?;
+        c_array.assign(&result);
         
         Ok(())
     }
@@ -122,15 +133,24 @@ impl Backend for CpuBackend {
         b: &[f32], 
         c: &mut [f32],
     ) -> Result<(), Box<dyn Error + Send + Sync>> {
-        // Create ndarray views
-        let a_array = ArrayView1::from(a);
-        let b_array = ArrayView1::from(b);
+        // Determine shapes based on slice lengths
+        let b_len = b.len();
+        if a.len() % b_len != 0 {
+            return Err("Shape mismatch for broadcasting add".into());
+        }
+        let a_rows = a.len() / b_len;
+        let output_shape = (a_rows, b_len);
+
+        // Create ndarray views with correct shapes
+        let a_array = ArrayView2::from_shape(output_shape, a)?;
+        let b_array = ArrayView1::from(b); // Bias is 1D
         
-        // Perform addition (ndarray will handle broadcasting automatically)
+        // Perform addition with broadcasting
         let result = &a_array + &b_array;
         
-        // Copy result to output buffer
-        c.copy_from_slice(result.as_slice().unwrap());
+        // Copy result to output buffer using assign
+        let mut c_array = ArrayViewMut2::from_shape(output_shape, c)?;
+        c_array.assign(&result);
         
         Ok(())
     }
