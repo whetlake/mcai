@@ -1,13 +1,10 @@
 use std::error::Error;
 use std::fmt;
 use ndarray::{Array, Array1, Array2, ArrayView1, ArrayView2, ArrayViewMut2, s};
-use std::sync::Arc;
 
 use super::super::backend::{Backend, BackendMemory};
 use super::quants::dequantize::Dequantizer;
 use crate::gguf::GGUFValueType;
-use crate::llm::tensor::Tensor;
-use crate::gguf::TensorInfo;
 
 /// CPU-specific memory implementation
 pub struct CpuMemory {

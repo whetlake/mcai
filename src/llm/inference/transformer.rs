@@ -2,7 +2,7 @@ use std::error::Error;
 use std::sync::{Arc, Mutex};
 use crate::llm::model::Model;
 use crate::llm::backend::Backend;
-use crate::llm::tensor::{Tensor, mul, matmul, add};
+use crate::llm::tensor::{Tensor, matmul, add};
 use super::TensorCache;
 
 
@@ -130,6 +130,7 @@ impl Transformer {
         // 3. Apply the attention layer
         println!("  Applying attention layer");
         let query_projection = self.query_projection(&normalized_state, block_idx, tensor_cache)?;
+        let key_projection = self.key_projection(&normalized_state, block_idx, tensor_cache)?;
         
         // Print a sample of the query projection tensor for debugging
         let shape = query_projection.shape();
@@ -221,11 +222,11 @@ impl Transformer {
         
         // Load weights first
         let q_weight: &Tensor = tensor_cache.get(&q_weight_name)
-            .map_err(|e| format!("Failed to load query weights for block {}: {}", block_idx, e))?;
+            .map_err(|e: Box<dyn Error + Send + Sync>| format!("Failed to load query weights for block {}: {}", block_idx, e))?;
         println!("  q_weight shape: {:?}", q_weight.shape());
         
         // Perform matrix multiplication: X * W_q^T
-        let mut query = matmul(normalized_input, q_weight, false, true)?;
+        let mut query = matmul(normalized_input, q_weight, false, false)?;
         println!("  query after matmul shape: {:?}", query.shape());
         
         // Load bias and add it: (X * W_q^T) + b_q
@@ -237,5 +238,38 @@ impl Transformer {
         println!("  final query shape: {:?}", query.shape());
         
         Ok(query)
+    }
+
+    /// Project the normalized input tensor using key weights and bias
+    /// K = (X * W_k) + b_k
+    fn key_projection(&self, 
+                      normalized_input: &Tensor,
+                      block_idx: usize,
+                      tensor_cache: &mut TensorCache) -> Result<Tensor, Box<dyn Error + Send + Sync>> {
+        // Load key weights and bias for this block
+        let k_weight_name = format!("blk.{}.attn_k.weight", block_idx);
+        let k_bias_name = format!("blk.{}.attn_k.bias", block_idx);
+        
+        println!("Key projection shapes:");
+        println!("  normalized_input shape: {:?}", normalized_input.shape());
+        
+        // Load weights first
+        let k_weight: &Tensor = tensor_cache.get(&k_weight_name)
+            .map_err(|e: Box<dyn Error + Send + Sync>| format!("Failed to load key weights for block {}: {}", block_idx, e))?;
+        println!("  k_weight shape: {:?}", k_weight.shape());
+        
+        // Perform matrix multiplication: X * W_k^T
+        let mut key = matmul(normalized_input, k_weight, false, false)?;
+        println!("  key after matmul shape: {:?}", key.shape());
+        
+        // Load bias and add it: (X * W_k^T) + b_k
+        let k_bias: &Tensor = tensor_cache.get(&k_bias_name)
+            .map_err(|e| format!("Failed to load key bias for block {}: {}", block_idx, e))?;
+        println!("  k_bias shape: {:?}", k_bias.shape());
+        
+        key = add(&key, k_bias)?;
+        println!("  final key shape: {:?}", key.shape());
+        
+        Ok(key)
     }
 }
