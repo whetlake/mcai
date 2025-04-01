@@ -4,6 +4,7 @@ use std::sync::Arc;
 
 use super::cpu::CpuBackend;
 use crate::gguf::GGUFValueType;
+use crate::llm::tensor::Tensor;
 
 /// Trait for backend-specific memory management
 pub trait BackendMemory: Send + Sync {
@@ -92,6 +93,45 @@ pub trait Backend: Send + Sync + Debug {
         b: &[f32],
     ) -> Result<f32, Box<dyn Error + Send + Sync>>;
     
+    /// Applies Rotary Positional Embeddings (RoPE) in place.
+    /// Operates on data assumed to be shaped [seq_len, num_heads, head_dim].
+    fn apply_rope(
+        &self,
+        data: &mut [f32],
+        seq_len: usize,
+        num_heads: usize,
+        head_dim: usize,
+    ) -> Result<(), Box<dyn Error + Send + Sync>>;
+
+    /// Repeats Key/Value heads for Grouped-Query Attention.
+    /// Input shape: [head_count_kv, seq_len, head_dim]
+    /// Output shape: [head_count_kv * num_groups, seq_len, head_dim]
+    fn repeat_kv_heads(
+        &self,
+        tensor: &Tensor,
+        num_groups: usize, // head_count / head_count_kv
+    ) -> Result<Tensor, Box<dyn Error + Send + Sync>>;
+
+    /// Performs batched matrix multiplication: C = A @ B
+    /// Expects A shape [batch, m, k], B shape [batch, k, n] (or [batch, n, k] if transpose_b)
+    /// Returns C shape [batch, m, n]
+    fn bmm(
+        &self,
+        a: &Tensor,
+        b: &Tensor,
+        transpose_a: bool, // Typically false for Q
+        transpose_b: bool, // Typically true for K
+    ) -> Result<Tensor, Box<dyn Error + Send + Sync>>;
+
+    /// Permutes the axes of a tensor's data.
+    /// Returns a new BackendMemory buffer with the permuted data.
+    fn permute(
+        &self,
+        data: &[f32],
+        current_shape: &[usize],
+        new_axes: &[usize],
+    ) -> Result<Box<dyn BackendMemory>, Box<dyn Error + Send + Sync>>;
+
     /// Dequantizes tensor data from its compressed format to f32 values
     ///
     /// # Parameters

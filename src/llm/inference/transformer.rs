@@ -125,11 +125,23 @@ impl Transformer {
         
         // 2. Apply RMS normalization
         println!("  Applying RMS normalization");
-        let normalized_state = self.rms_norm(hidden_state, attn_norm_tensor)?;
+        let normalized_state = match self.rms_norm(hidden_state, attn_norm_tensor) {
+            Ok(tensor) => tensor,
+            Err(e) => {
+                eprintln!("!!! Error returned directly from rms_norm call (block {}): {:?}", block_idx, e);
+                return Err(e);
+            }
+        };
 
         // 3. Calculate Q, K, V projections using the unified function
         println!("  Applying attention layer projections");
-        let mut query_projection = self.projection(&normalized_state, block_idx, "q", tensor_cache)?;
+        let mut query_projection = match self.projection(&normalized_state, block_idx, "q", tensor_cache) {
+            Ok(tensor) => tensor,
+            Err(e) => {
+                eprintln!("!!! Error returned directly from projection('q') call (block {}): {:?}", block_idx, e);
+                return Err(e);
+            }
+        };
         let mut key_projection = self.projection(&normalized_state, block_idx, "k", tensor_cache)?;
         let mut value_projection = self.projection(&normalized_state, block_idx, "v", tensor_cache)?;
 
@@ -149,8 +161,7 @@ impl Transformer {
         println!("    Query reshaped: {:?}", query_projection.shape());
 
         // 2. Reshape K and V in place - Note: they use head_count_kv
-        let k_shape_original = key_projection.shape().to_vec(); // Store original shape if needed later?
-        let kv_dim = k_shape_original[1]; // Dimension of the K projection output
+        let kv_dim = key_projection.shape()[1]; // Dimension of the K projection output
         if kv_dim % self.head_count_kv != 0 {
             return Err(format!("KV dimension ({}) is not divisible by KV head count ({})", kv_dim, self.head_count_kv).into());
         }
@@ -161,15 +172,80 @@ impl Transformer {
         println!("    Key reshaped:   {:?}", key_projection.shape());
         println!("    Value reshaped: {:?}", value_projection.shape());
 
-        // (Attention calculation will follow) ...
-        
-        // --- Example of reshaping back (if needed later) ---
-        // key_projection.reshape_in_place(k_shape_original)?;
-        // println!("    Key reshaped back: {:?}", key_projection.shape());
-        
-        // For now, just return the normalized states
-        println!("  Block {} processing complete", block_idx + 1);
-        Ok(normalized_state)
+        // 3. Apply RoPE to Q and K
+        println!("  Applying RoPE to query and key projections");
+        self.apply_rope_in_place(&mut query_projection)?;
+        self.apply_rope_in_place(&mut key_projection)?;
+
+        // 5. Permute Q, K, V for batched matrix multiplication
+        // Reshape from [seq_len, num_heads, head_dim] -> [num_heads, seq_len, head_dim]
+        println!("  Permuting Q, K, V for attention calculation");
+        let query_permuted = query_projection.permute(&[1, 0, 2])?;
+        let key_permuted = key_projection.permute(&[1, 0, 2])?;
+        let value_permuted = value_projection.permute(&[1, 0, 2])?; // V also needs permutation
+        println!("    Query permuted: {:?}", query_permuted.shape());
+        println!("    Key permuted:   {:?}", key_permuted.shape());
+        println!("    Value permuted: {:?}", value_permuted.shape());
+
+        // --- Attention Calculation ---
+
+        // 6. Handle Grouped-Query Attention (Repeat K/V heads if necessary)
+        println!("  Handling GQA (Repeating KV heads if needed)");
+        let num_groups = self.head_count / self.head_count_kv;
+        let key_repeated = self.backend.repeat_kv_heads(&key_permuted, num_groups)?;
+        let value_repeated = self.backend.repeat_kv_heads(&value_permuted, num_groups)?;
+        println!("    Key repeated:   {:?}", key_repeated.shape()); // Should be [head_count, seq_len, kv_head_dim]
+        println!("    Value repeated: {:?}", value_repeated.shape()); // Should be [head_count, seq_len, kv_head_dim]
+
+        // Ensure head dimensions match after potential repetition
+        let head_dim = query_permuted.shape()[2];
+        if key_repeated.shape()[2] != head_dim || value_repeated.shape()[2] != head_dim {
+            return Err(format!("Head dimensions mismatch after KV repetition: Q[{}], K[{}], V[{}]",
+                                head_dim, key_repeated.shape()[2], value_repeated.shape()[2]).into());
+        }
+
+        // 7. Calculate Attention Scores: Q @ Kᵀ (batch-wise)
+        println!("  Calculating attention scores (Q @ K^T)");
+        // Input Q: [head_count, seq_len, head_dim]
+        // Input K: [head_count, seq_len, head_dim] -> Transposed K: [head_count, head_dim, seq_len]
+        // Output Scores: [head_count, seq_len, seq_len]
+        // Explicitly match the result instead of using '?'
+        let mut attention_scores = match self.backend.bmm(
+            &query_permuted,
+            &key_repeated, // Use the (potentially) repeated K
+            false,         // transpose_a = false
+            true           // transpose_b = true (K -> Kᵀ)
+        ) {
+            Ok(tensor) => tensor, // If Ok, assign the tensor
+            Err(e) => {
+                // If Err, print the specific error and then return it
+                eprintln!("!!! Error returned directly from bmm call: {:?}", e);
+                return Err(e); 
+            }
+        };
+        println!("    Attention scores shape: {:?}", attention_scores.shape());
+
+        // 8. Scale Scores
+        println!("  Scaling attention scores by 1/sqrt(head_dim)");
+        let scale = (head_dim as f32).sqrt().recip(); // Calculate 1 / sqrt(head_dim)
+        for score in attention_scores.data_mut() {
+            *score *= scale;
+        }
+
+        // (9. Apply Mask - Placeholder)
+        println!("  (Skipping Masking for now)");
+
+        // (10. Apply Softmax - Placeholder)
+        println!("  (Skipping Softmax for now)");
+
+        // (11. Multiply by Value - Placeholder)
+        println!("  (Skipping weighted sum with Value for now)");
+
+        // (Remaining steps: Combine heads, final projection, residual...)
+
+        // For now, return the scaled attention scores for inspection
+        println!("  Block {} attention score calculation partially complete", block_idx + 1);
+        Ok(attention_scores) // Return scores instead of normalized_state
     }
 
     /// Apply RMS normalization to a tensor
@@ -243,5 +319,25 @@ impl Transformer {
         println!("  final {} shape: {:?}", projection_type, proj_result.shape());
         
         Ok(proj_result)
+    }
+
+    /// Applies Rotary Positional Embeddings (RoPE) to a tensor in place.
+    /// Input tensor shape: [seq_len, num_heads, head_dim]
+    fn apply_rope_in_place(&self, input: &mut Tensor) -> Result<(), Box<dyn Error + Send + Sync>> {
+        let shape = input.shape();
+        if shape.len() != 3 {
+            return Err("Input tensor for RoPE must have 3 dimensions [seq_len, num_heads, head_dim]".into());
+        }
+        let seq_len = shape[0];
+        let num_heads = shape[1];
+        let head_dim = shape[2];
+
+        // Call the backend implementation
+        self.backend.apply_rope(
+            input.data_mut(),
+            seq_len,
+            num_heads,
+            head_dim,
+        )
     }
 }

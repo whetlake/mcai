@@ -1,10 +1,13 @@
 use std::error::Error;
 use std::fmt;
-use ndarray::{Array, Array1, Array2, ArrayView1, ArrayView2, ArrayViewMut2, s};
+use ndarray::{Array, Array1, Array2, ArrayView1, ArrayView2, ArrayViewMut2, ArrayViewMut3, Axis, IxDyn, s};
+use std::sync::Arc;
 
 use super::super::backend::{Backend, BackendMemory};
 use super::quants::dequantize::Dequantizer;
 use crate::gguf::GGUFValueType;
+use crate::llm::tensor::Tensor;
+use ndarray::{Array3, ArrayD, ArrayView3, stack};
 
 /// CPU-specific memory implementation
 pub struct CpuMemory {
@@ -287,6 +290,71 @@ impl Backend for CpuBackend {
         Ok(a_array.dot(&b_array))
     }
 
+    /// Applies Rotary Positional Embeddings (RoPE) using ndarray.
+    fn apply_rope(
+        &self,
+        data: &mut [f32],
+        seq_len: usize,
+        num_heads: usize,
+        head_dim: usize,
+    ) -> Result<(), Box<dyn Error + Send + Sync>> {
+        // Create a mutable 3D view of the data
+        let mut view = ArrayViewMut3::from_shape((seq_len, num_heads, head_dim), data)?;
+
+        let rope_dim = head_dim; // Apply RoPE to the full head dimension
+        let theta_base = 10000.0f32;
+
+        for pos in 0..seq_len {
+            for h in 0..num_heads {
+                // Get mutable access to the head slice for this position and head
+                let mut head_slice = view.slice_mut(s![pos, h, ..]); 
+                for i in (0..rope_dim).step_by(2) {
+                    // Calculate theta for this dimension pair
+                    let theta = theta_base.powf(-((i as f32) / (rope_dim as f32)));
+                    let m_theta = pos as f32 * theta;
+                    let cos_m_theta = m_theta.cos();
+                    let sin_m_theta = m_theta.sin();
+
+                    // Get the pair of values
+                    let v0 = head_slice[i];
+                    let v1 = head_slice[i + 1];
+
+                    // Apply rotation
+                    *head_slice.get_mut(i).unwrap()     = v0 * cos_m_theta - v1 * sin_m_theta;
+                    *head_slice.get_mut(i + 1).unwrap() = v0 * sin_m_theta + v1 * cos_m_theta;
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Permutes the axes of a tensor's data using ndarray.
+    fn permute(
+        &self,
+        data: &[f32],
+        current_shape: &[usize],
+        new_axes: &[usize],
+    ) -> Result<Box<dyn BackendMemory>, Box<dyn Error + Send + Sync>> {
+        // Create an ndarray view with the original shape
+        let view = ndarray::ArrayViewD::from_shape(IxDyn(current_shape), data)?;
+
+        // Permute the axes
+        let permuted_view = view.permuted_axes(IxDyn(new_axes));
+
+        // Create a new owned array with the data in the new permuted order (makes it contiguous)
+        let permuted_array: ndarray::ArrayD<f32> = permuted_view.to_owned();
+
+        // Convert the owned array's data into a Vec<f32>
+        let permuted_data = permuted_array.into_raw_vec_and_offset().0;
+
+        // Allocate new backend memory and copy the contiguous permuted data into it
+        let mut new_memory = self.allocate_memory(permuted_data.len())?;
+        new_memory.as_mut_slice().copy_from_slice(&permuted_data);
+
+        Ok(new_memory)
+    }
+
     /// Dequantizes tensor data from its compressed format to f32 values
     fn dequantize(
         &self,
@@ -297,6 +365,157 @@ impl Backend for CpuBackend {
     ) -> Result<Vec<f32>, Box<dyn Error + Send + Sync>> {
         // Use the CPU-specific Dequantizer to handle all tensor formats
         Dequantizer::dequantize(data, offset, total_elements, data_type)
+    }
+
+    /// Repeats Key/Value heads for Grouped-Query Attention.
+    fn repeat_kv_heads(
+        &self,
+        tensor: &Tensor,
+        num_groups: usize,
+    ) -> Result<Tensor, Box<dyn Error + Send + Sync>> {
+        if num_groups == 1 {
+            // No repetition needed, return a clone of the original tensor
+            return Ok(tensor.clone());
+        }
+
+        let shape = tensor.shape();
+        if shape.len() != 3 {
+            return Err("Input tensor must be 3D [head_count_kv, seq_len, head_dim]".into());
+        }
+        let head_count_kv = shape[0];
+        let seq_len = shape[1];
+        let head_dim = shape[2];
+
+        let new_head_count = head_count_kv * num_groups;
+        let new_shape = vec![new_head_count, seq_len, head_dim];
+        let total_elements = new_shape.iter().product();
+
+        // Create input view
+        let input_view = ArrayView3::from_shape((head_count_kv, seq_len, head_dim), tensor.data())?;
+        
+        // Create output array
+        let mut output_array = Array3::<f32>::zeros((new_head_count, seq_len, head_dim));
+
+        // Copy heads
+        for kv_h in 0..head_count_kv {
+            let head_slice = input_view.slice(s![kv_h, .., ..]);
+            for g in 0..num_groups {
+                output_array.slice_mut(s![kv_h * num_groups + g, .., ..]).assign(&head_slice);
+            }
+        }
+
+        // Convert to Vec<f32>
+        let output_data = output_array.into_raw_vec_and_offset().0;
+
+        // Allocate memory and copy
+        let mut new_memory = self.allocate_memory(total_elements)?;
+        new_memory.as_mut_slice().copy_from_slice(&output_data);
+
+        // Create new tensor
+        Tensor::from_backend_memory(new_memory, new_shape, Arc::clone(tensor.backend()))
+    }
+
+    /// Performs batched matrix multiplication: C = A @ B
+    fn bmm(
+        &self,
+        a: &Tensor,
+        b: &Tensor,
+        transpose_a: bool,
+        transpose_b: bool,
+    ) -> Result<Tensor, Box<dyn Error + Send + Sync>> {
+        let a_shape = a.shape();
+        let b_shape = b.shape();
+
+        if a_shape.len() != 3 || b_shape.len() != 3 {
+            return Err("Inputs for bmm must be 3D tensors".into());
+        }
+        if a_shape[0] != b_shape[0] { // Batch sizes must match
+            return Err(format!("Batch dimensions must match for bmm: {:?} vs {:?}", a_shape, b_shape).into());
+        }
+
+        let batch_size = a_shape[0]; // Size of the batch dimension (number of heads)
+        let m = a_shape[1]; // Number of rows in each matrix of A (seq_len for Q)
+        let k_a = a_shape[2]; // Number of columns in each matrix of A (head_dim for Q)
+        let k_b = b_shape[1]; // Number of rows in each matrix of B (seq_len for K)
+        let n = b_shape[2]; // Number of columns in each matrix of B (head_dim for K)
+
+        // Validate dimensions for multiplication
+        if transpose_b { // A[batch, m, k_a] @ B[batch, k_b, n].T (shape [batch, n, k_b])
+            // Inner dimension k_a of A must match dimension n of B (which becomes the inner dim of B.T)
+            if k_a != n { // Corrected check
+                 // Corrected error message format
+                 return Err(format!("Inner dimensions must match for A @ B.T (A:k={}, B:n={}): {:?} vs {:?}", k_a, n, a_shape, b_shape).into());
+            }
+        } else { // A[batch, m, k_a] @ B[batch, k_b, n]
+            // Inner dimension k_a of A must match dimension k_b of B
+            if k_a != k_b { // Correct check for this case
+                 // Corrected error message format
+                return Err(format!("Inner dimensions must match for A @ B (A:k={}, B:k={}): {:?} vs {:?}", k_a, k_b, a_shape, b_shape).into());
+            }
+        }
+        
+        // Determine output shape's last dimension 'n_out'
+        let output_n = if transpose_b { k_b } else { n };
+
+        let output_shape = vec![batch_size, m, output_n];
+        let total_elements = output_shape.iter().product();
+
+        println!("    [bmm] Creating input views. A: {:?}, B: {:?}", a.shape(), b.shape());
+        let a_array = ArrayView3::from_shape((batch_size, m, k_a), a.data())
+            .map_err(|e| format!("Error creating view for A in bmm: {}", e))?;
+        let b_array = ArrayView3::from_shape((batch_size, k_b, n), b.data())
+            .map_err(|e| format!("Error creating view for B in bmm: {}", e))?;
+
+        let mut result_arrays = Vec::with_capacity(batch_size); // Store owned arrays here
+
+        // Perform matmul for each item in the batch
+        println!("    [bmm] Starting batch loop (size: {})...", batch_size);
+        for i in 0..batch_size {
+            //println!("      [bmm] Processing batch item {}", i);
+            let a_slice = a_array.slice(s![i, .., ..]);
+            let b_slice = b_array.slice(s![i, .., ..]);
+            
+            // Handle transposition
+            let a_view = if transpose_a { unimplemented!("Transpose A not yet handled in bmm") } else { a_slice };
+            let b_view = if transpose_b { b_slice.t() } else { b_slice.view() };
+            
+            // Check final shapes before dot product
+            if a_view.shape()[1] != b_view.shape()[0] {
+                 return Err(format!("Shape mismatch before dot product in batch {}: A_slice {:?}, B_view {:?}", i, a_view.shape(), b_view.shape()).into());
+            }
+            
+            // Calculate result for this batch item
+            //println!("      [bmm] Performing dot product for batch item {}", i);
+            let c_slice: Array2<f32> = a_view.dot(&b_view); //.map_err(|e| format!("Error during dot product in bmm batch {}: {}", i, e))?;
+            // Note: .dot() on views doesn't typically return a Result unless maybe BLAS fails?
+            // Let's assume it panics or returns the array directly for now. If BLAS errors are possible, proper handling would be needed.
+
+            result_arrays.push(c_slice); // Push owned array
+        }
+        println!("    [bmm] Batch loop finished.");
+
+        // Create views from the owned arrays for stacking
+        println!("    [bmm] Creating views for stacking.");
+        let result_views: Vec<_> = result_arrays.iter().map(|a| a.view()).collect();
+
+        // Stack results into a 3D array
+        println!("    [bmm] Stacking results.");
+        let output_array = stack(Axis(0), &result_views)
+            .map_err(|e| format!("Error during stack operation in bmm: {}", e))?; // Add error context here
+        println!("    [bmm] Stacking finished.");
+
+        let output_data = output_array.into_raw_vec_and_offset().0; // Use updated method
+        println!("    [bmm] Extracted raw vec.");
+
+        // Allocate memory and copy
+        println!("    [bmm] Allocating output memory.");
+        let mut new_memory = self.allocate_memory(total_elements)?;
+        println!("    [bmm] Copying data to output memory.");
+        new_memory.as_mut_slice().copy_from_slice(&output_data);
+
+        // Create new tensor
+        println!("    [bmm] Creating output tensor.");
+        Tensor::from_backend_memory(new_memory, output_shape, Arc::clone(a.backend()))
     }
 }
 

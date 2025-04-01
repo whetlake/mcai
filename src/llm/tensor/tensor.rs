@@ -47,6 +47,20 @@ impl Tensor {
         })
     }
 
+    /// Create a tensor directly from existing backend memory and shape
+    pub fn from_backend_memory(
+        memory: Box<dyn BackendMemory>,
+        shape: Vec<usize>,
+        backend: Arc<Box<dyn Backend>>,
+    ) -> Result<Self, Box<dyn Error + Send + Sync>> {
+        Ok(Self {
+            backend,
+            memory,
+            shape,
+            name: String::new(), // Or allow passing a name?
+        })
+    }
+
     /// Create a new tensor filled with zeros
     pub fn zeros(shape: Vec<usize>, backend: Arc<Box<dyn Backend>>) -> Result<Self, Box<dyn Error + Send + Sync>> {
         let total_elements = shape.iter().product();
@@ -108,6 +122,40 @@ impl Tensor {
         // Just update the shape metadata
         self.shape = new_shape;
         Ok(())
+    }
+
+    /// Returns a new tensor with its axes permuted.
+    pub fn permute(&self, new_axes: &[usize]) -> Result<Self, Box<dyn Error + Send + Sync>> {
+        // Validate number of axes
+        if self.shape.len() != new_axes.len() {
+            return Err(format!(
+                "Permutation error: Tensor has {} dimensions ({:?}), but {} new axes were provided ({:?})",
+                self.shape.len(), self.shape, new_axes.len(), new_axes
+            )
+            .into());
+        }
+        // Basic validation that axes are unique and within bounds (could be more thorough)
+        let mut seen = vec![false; self.shape.len()];
+        for &axis in new_axes {
+            if axis >= self.shape.len() || seen[axis] {
+                return Err(format!("Invalid axis permutation: {:?}", new_axes).into());
+            }
+            seen[axis] = true;
+        }
+
+        // Calculate the new shape based on the permutation
+        let new_shape: Vec<usize> = new_axes.iter().map(|&axis| self.shape[axis]).collect();
+
+        // Call the backend to perform the permutation and get new memory
+        let new_memory = self.backend.permute(self.data(), &self.shape, new_axes)?;
+
+        // Create the new tensor
+        Ok(Self {
+            backend: Arc::clone(&self.backend),
+            memory: new_memory,
+            shape: new_shape,
+            name: self.name.clone(), // Consider updating the name if desired
+        })
     }
 }
 
