@@ -109,7 +109,7 @@ impl Transformer {
         println!("Completed processing through {} transformer blocks", self.block_count);
         Ok(current_states)
     }
-    
+
     /// Process a single transformer block
     fn process_block(&self, 
                      hidden_state: &Tensor, 
@@ -232,20 +232,25 @@ impl Transformer {
             *score *= scale;
         }
 
-        // (9. Apply Mask - Placeholder)
-        println!("  (Skipping Masking for now)");
+        // 9. Apply Causal Attention Mask
+        println!("  Applying causal attention mask");
+        self.apply_causal_mask(&mut attention_scores)?;
 
         // (10. Apply Softmax - Placeholder)
         println!("  (Skipping Softmax for now)");
+        // For now, we'll use the masked, scaled scores directly as probabilities
+        let attention_probs = attention_scores; // Placeholder!
 
-        // (11. Multiply by Value - Placeholder)
-        println!("  (Skipping weighted sum with Value for now)");
+        // 11. Multiply by Value: Output = Attention_Probs @ V
+        println!("  Multiplying by Value");
+        let output = self.backend.bmm(&attention_probs, &value_repeated, false, false)?;
+        println!("    Output shape: {:?}", output.shape());
 
         // (Remaining steps: Combine heads, final projection, residual...)
 
-        // For now, return the scaled attention scores for inspection
+        // For now, return the output tensor for inspection
         println!("  Block {} attention score calculation partially complete", block_idx + 1);
-        Ok(attention_scores) // Return scores instead of normalized_state
+        Ok(output) // Return output instead of normalized_state
     }
 
     /// Apply RMS normalization to a tensor
@@ -339,5 +344,36 @@ impl Transformer {
             num_heads,
             head_dim,
         )
+    }
+
+    /// Applies a causal mask to attention scores in place.
+    /// Sets scores where key_pos > query_pos to negative infinity.
+    /// Expects scores shape: [head_count, seq_len, seq_len]
+    fn apply_causal_mask(&self, scores: &mut Tensor) -> Result<(), Box<dyn Error + Send + Sync>> {
+        let shape = scores.shape();
+        if shape.len() != 3 {
+            return Err("Scores tensor must be 3D for causal masking".into());
+        }
+        let head_count = shape[0];
+        let seq_len = shape[1];
+        if shape[2] != seq_len {
+            return Err(format!("Scores tensor must be square in the last two dimensions, got {:?}", shape).into());
+        }
+
+        let scores_data = scores.data_mut();
+
+        for h in 0..head_count {
+            for i in 0..seq_len { // Query sequence position
+                for j in 0..seq_len { // Key sequence position
+                    if j > i {
+                        let index = h * seq_len * seq_len + i * seq_len + j;
+                        if index < scores_data.len() {
+                           scores_data[index] = f32::NEG_INFINITY;
+                        }
+                    }
+                }
+            }
+        }
+        Ok(())
     }
 }
