@@ -367,6 +367,44 @@ impl Backend for CpuBackend {
         Dequantizer::dequantize(data, offset, total_elements, data_type)
     }
 
+    /// Scales all elements of a tensor by a given factor, in place.
+    fn scale(&self, tensor: &mut Tensor, scale_factor: f32) -> Result<(), Box<dyn Error + Send + Sync>> {
+        let data = tensor.data_mut();
+        for val in data {
+            *val *= scale_factor;
+        }
+        Ok(())
+    }
+
+    /// Applies a causal mask to attention scores in place.
+    fn apply_causal_mask(&self, scores: &mut Tensor) -> Result<(), Box<dyn Error + Send + Sync>> {
+        let shape = scores.shape();
+        if shape.len() != 3 {
+            return Err("Scores tensor must be 3D for causal masking".into());
+        }
+        let head_count = shape[0];
+        let seq_len = shape[1];
+        if shape[2] != seq_len {
+            return Err(format!("Scores tensor must be square in the last two dimensions, got {:?}", shape).into());
+        }
+
+        let scores_data = scores.data_mut();
+
+        for h in 0..head_count {
+            for i in 0..seq_len { // Query sequence position
+                for j in 0..seq_len { // Key sequence position
+                    if j > i {
+                        let index = h * seq_len * seq_len + i * seq_len + j;
+                        if index < scores_data.len() {
+                           scores_data[index] = f32::NEG_INFINITY;
+                        }
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
     /// Repeats Key/Value heads for Grouped-Query Attention.
     fn repeat_kv_heads(
         &self,

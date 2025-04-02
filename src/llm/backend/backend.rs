@@ -103,6 +103,13 @@ pub trait Backend: Send + Sync + Debug {
         head_dim: usize,
     ) -> Result<(), Box<dyn Error + Send + Sync>>;
 
+    /// Scales all elements of a tensor by a given factor, in place.
+    fn scale(&self, tensor: &mut Tensor, scale_factor: f32) -> Result<(), Box<dyn Error + Send + Sync>>;
+
+    /// Applies a causal mask to attention scores in place.
+    /// Assumes scores shape: [head_count, seq_len, seq_len]
+    fn apply_causal_mask(&self, scores: &mut Tensor) -> Result<(), Box<dyn Error + Send + Sync>>;
+
     /// Repeats Key/Value heads for Grouped-Query Attention.
     /// Input shape: [head_count_kv, seq_len, head_dim]
     /// Output shape: [head_count_kv * num_groups, seq_len, head_dim]
