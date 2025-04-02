@@ -234,10 +234,11 @@ impl Transformer {
         println!("  Applying causal attention mask");
         self.backend.apply_causal_mask(&mut attention_scores)?;
 
-        // (10. Apply Softmax - Placeholder)
-        println!("  (Skipping Softmax for now)");
-        // For now, we'll use the masked, scaled scores directly as probabilities
-        let attention_probs = attention_scores; // Placeholder!
+        // 10. Apply Softmax
+        println!("  Applying softmax to scores");
+        self.backend.softmax(&mut attention_scores)?;
+        // attention_scores now holds probabilities
+        let attention_probs = attention_scores; // Rename for clarity
 
         // 11. Multiply by Value: Output = Attention_Probs @ V
         println!("  Multiplying by Value");

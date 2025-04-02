@@ -231,40 +231,45 @@ impl Backend for CpuBackend {
         Ok(())
     }
     
-    /// Applies softmax function to input tensor.
-    ///
-    /// # Parameters
-    /// * `x` - Input tensor
-    /// * `output` - Output tensor
-    /// * `size` - Number of elements
+    /// Applies softmax function in-place along the last axis.
     fn softmax(
         &self,
-        x: &[f32],
-        output: &mut [f32],
-        size: usize,
+        tensor: &mut Tensor,
     ) -> Result<(), Box<dyn Error + Send + Sync>> {
-        // Create ndarray view
-        let x_array = ArrayView1::from(x);
-        
-        // Find max value for numerical stability
-        let max_val = x_array.fold(f32::MIN, |max, &val| max.max(val));
-        
-        // Calculate exp(x - max) and sum
-        let mut exp_vals = Array1::zeros(size);
-        let mut sum = 0.0;
-        
-        for i in 0..size {
-            let val = (x_array[i] - max_val).exp();
-            exp_vals[i] = val;
-            sum += val;
+        let shape = tensor.shape();
+        if shape.len() < 1 {
+            return Ok(()); // No-op for empty or 0D tensor
         }
-        
-        // Normalize by sum
-        let result = exp_vals / sum;
-        
-        // Copy result to output buffer
-        output.copy_from_slice(result.as_slice().unwrap());
-        
+        let last_axis = Axis(shape.len() - 1);
+        let mut array_view = ndarray::ArrayViewMutD::from_shape(IxDyn(shape), tensor.data_mut())?;
+
+        // Iterate over all possible slices along the last dimension
+        for mut row in array_view.axis_iter_mut(last_axis) {
+            // Apply 1D softmax to this row (slice)
+            let max_val = row.fold(f32::NEG_INFINITY, |max, &val| max.max(val));
+            let mut sum = 0.0f32;
+            
+            // Calculate exp(x - max) and sum
+            row.mapv_inplace(|x| {
+                let val = (x - max_val).exp(); // First subtrack the maximum for numerical stability
+                sum += val; // add up the sum
+                val // update the value with the exponential
+            });
+            
+            // Check for sum == 0 to avoid division by zero (e.g., if all inputs were -inf)
+            // There is one consideration here: be aware that this might impact the output for that specific
+            // token position, as it will receive no contextual information from attention. But in practice
+            // this is unlikely to happen, because this sum 0.0 should never occur.
+            if sum == 0.0 {
+                // If sum is zero (e.g., all masked inputs were -inf),
+                // assign zero probability everywhere.
+                row.fill(0.0);
+            } else {
+                // Normalize by sum
+                 row.mapv_inplace(|x| x / sum);
+            }
+        }
+
         Ok(())
     }
     

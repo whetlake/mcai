@@ -78,12 +78,10 @@ pub trait Backend: Send + Sync + Debug {
         eps: f32,
     ) -> Result<(), Box<dyn Error + Send + Sync>>;
     
-    /// Apply softmax function
+    /// Apply softmax function in-place along the last axis of the tensor.
     fn softmax(
         &self,
-        x: &[f32],
-        output: &mut [f32],
-        size: usize,
+        tensor: &mut Tensor,
     ) -> Result<(), Box<dyn Error + Send + Sync>>;
     
     /// Calculate dot product between two vectors
