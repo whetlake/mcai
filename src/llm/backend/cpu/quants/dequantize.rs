@@ -36,9 +36,9 @@ impl Dequantizer {
             
             // Calculate elapsed time
             let elapsed = start_time.elapsed();
+
+            println!("Dequantization completed in {:.2?} of type {:?}", elapsed, data_type);
             
-            // Report the actual size information
-            println!("Dequantization completed in {:.2?}", elapsed);
             Ok(result)
         } else {
             // No format implementation found for this data type

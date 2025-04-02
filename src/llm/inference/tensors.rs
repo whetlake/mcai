@@ -4,6 +4,7 @@ use std::collections::HashMap;
 use crate::llm::model::Model;
 use crate::llm::tensor::Tensor;
 use crate::llm::backend::Backend;
+use rayon::prelude::*; // Import Rayon traits
 
 /// A cache for model tensors with utilities for loading and retrieving
 pub struct TensorCache {
@@ -69,12 +70,7 @@ impl TensorCache {
         let tensor_info = self.model.tensors.iter()
             .find(|t| t.name == tensor_name)
             .ok_or_else(|| format!("Tensor '{}' not found in model", tensor_name))?;
-            
-        // Print tensor information
-        println!("Loading tensor: {}", tensor_name);
-        println!("  - Dimensions: {:?}", tensor_info.dims);
-        println!("  - Type: {:?}", tensor_info.data_type);
-                
+                            
         // Load the actual tensor data from the model's memory map
         let start_time = std::time::Instant::now();
         
@@ -85,8 +81,7 @@ impl TensorCache {
             Arc::clone(&self.backend)
         )?;
         
-        let duration = start_time.elapsed();
-        println!("  - Loaded tensor in {:.2?}", duration);
+        let _duration = start_time.elapsed();
         
         // Store in cache
         self.cache.insert(tensor_name.to_string(), tensor);
@@ -94,7 +89,7 @@ impl TensorCache {
         Ok(())
     }
     
-    /// Preload a list of tensors
+    /// Preload a list of tensors in parallel
     /// 
     /// # Arguments
     /// * `tensor_names` - List of tensor names to preload
@@ -102,20 +97,57 @@ impl TensorCache {
     /// # Returns
     /// * `(usize, usize)` - (success_count, total_count)
     pub fn preload(&mut self, tensor_names: &[&str]) -> (usize, usize) {
+        let total_count = tensor_names.len();
+        println!("Starting parallel preloading of {} tensors...", total_count);
+
+        let results: Vec<_> = tensor_names
+            .par_iter() // Use parallel iterator
+            .map(|&name| {
+                // --- Start: Parallelizable part (similar to load) ---
+                let tensor_info_result = self.model.tensors.iter()
+                    .find(|t| t.name == name)
+                    .ok_or_else(|| format!("Tensor '{}' not found in model", name).into());
+
+                let tensor_result: Result<Tensor, Box<dyn Error + Send + Sync>> = match tensor_info_result {
+                    Ok(tensor_info) => {
+                        Tensor::new(
+                            self.model.raw_data(),
+                            tensor_info,
+                            Arc::clone(&self.backend)
+                        )
+                    }
+                    Err(e) => Err(e),
+                };
+                // --- End: Parallelizable part ---
+                
+                (name.to_string(), tensor_result) // Return name and result
+            })
+            .collect(); // Collect results from parallel tasks
+
+        // --- Start: Sequential insertion into cache ---
         let mut loaded_count = 0;
-        
-        for &tensor_name in tensor_names {
-            match self.load(tensor_name) {
-                Ok(_) => {
+        let mut errors = Vec::new();
+        for (name, result) in results {
+            match result {
+                Ok(tensor) => {
+                    self.cache.insert(name, tensor);
                     loaded_count += 1;
-                },
+                }
                 Err(e) => {
-                    println!("Warning: Failed to preload tensor '{}': {}", tensor_name, e);
+                    errors.push((name, e));
                 }
             }
         }
-        
-        println!("Preloaded {}/{} tensors", loaded_count, tensor_names.len());
-        (loaded_count, tensor_names.len())
+        // --- End: Sequential insertion ---
+
+        if !errors.is_empty() {
+            println!("Warnings during preloading:");
+            for (name, e) in errors {
+                println!("  - Failed to preload tensor '{}': {}", name, e);
+            }
+        }
+
+        println!("Finished preloading. Success: {}/{}", loaded_count, total_count);
+        (loaded_count, total_count)
     }
 }

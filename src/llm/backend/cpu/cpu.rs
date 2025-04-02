@@ -503,7 +503,6 @@ impl Backend for CpuBackend {
         let output_shape = vec![batch_size, m, output_n];
         let total_elements = output_shape.iter().product();
 
-        println!("    [bmm] Creating input views. A: {:?}, B: {:?}", a.shape(), b.shape());
         let a_array = ArrayView3::from_shape((batch_size, m, k_a), a.data())
             .map_err(|e| format!("Error creating view for A in bmm: {}", e))?;
         let b_array = ArrayView3::from_shape((batch_size, k_b, n), b.data())
@@ -512,7 +511,6 @@ impl Backend for CpuBackend {
         let mut result_arrays = Vec::with_capacity(batch_size); // Store owned arrays here
 
         // Perform matmul for each item in the batch
-        println!("    [bmm] Starting batch loop (size: {})...", batch_size);
         for i in 0..batch_size {
             //println!("      [bmm] Processing batch item {}", i);
             let a_slice = a_array.slice(s![i, .., ..]);
@@ -535,29 +533,20 @@ impl Backend for CpuBackend {
 
             result_arrays.push(c_slice); // Push owned array
         }
-        println!("    [bmm] Batch loop finished.");
-
         // Create views from the owned arrays for stacking
-        println!("    [bmm] Creating views for stacking.");
         let result_views: Vec<_> = result_arrays.iter().map(|a| a.view()).collect();
 
         // Stack results into a 3D array
-        println!("    [bmm] Stacking results.");
         let output_array = stack(Axis(0), &result_views)
             .map_err(|e| format!("Error during stack operation in bmm: {}", e))?; // Add error context here
-        println!("    [bmm] Stacking finished.");
 
         let output_data = output_array.into_raw_vec_and_offset().0; // Use updated method
-        println!("    [bmm] Extracted raw vec.");
 
         // Allocate memory and copy
-        println!("    [bmm] Allocating output memory.");
         let mut new_memory = self.allocate_memory(total_elements)?;
-        println!("    [bmm] Copying data to output memory.");
         new_memory.as_mut_slice().copy_from_slice(&output_data);
 
         // Create new tensor
-        println!("    [bmm] Creating output tensor.");
         Tensor::from_backend_memory(new_memory, output_shape, Arc::clone(a.backend()))
     }
 
@@ -654,10 +643,15 @@ impl Backend for CpuBackend {
         let a_shape = a.shape();
         let b_shape = b.shape();
 
-        // Basic broadcasting check (assuming B is 1D and matches A's last dimension)
-        // The backend's `add` implementation handles the actual broadcasting logic.
-        if a_shape.len() < 1 || b_shape.len() != 1 || a_shape.last() != b_shape.first() {
-             return Err(format!("Shape mismatch for broadcasting add: A {:?} vs B {:?}", a_shape, b_shape).into());
+        // Check for valid shapes: either identical shapes or B can be broadcast onto A
+        let is_identical_shape = a_shape == b_shape;
+        let is_broadcastable = b_shape.len() == 1 && a_shape.last() == b_shape.first() && a_shape.len() > 0;
+
+        if !is_identical_shape && !is_broadcastable {
+            return Err(format!(
+                "Shape mismatch for add_tensors: A {:?} and B {:?} are not identical or broadcastable",
+                a_shape, b_shape
+            ).into());
         }
 
         // Output tensor has the same shape as A
@@ -691,9 +685,6 @@ mod tests {
         
         // Perform C = A * B
         backend.matmul(&a, &b, &mut c, 2, 2, 3, false, false).unwrap();
-        
-        // Log the result
-        println!("CPU Backend matmul result: {:?}", c);
         
         // Expected result:
         // [1*7 + 2*9 + 3*11, 1*8 + 2*10 + 3*12]

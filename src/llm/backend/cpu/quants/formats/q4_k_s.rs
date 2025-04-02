@@ -59,7 +59,7 @@ impl FormatImpl for Q4KSFormat {
         // Calculate sizes for reporting
         let actual_size_mb = bytes_needed as f32 / (1024.0 * 1024.0);
         let f32_size_mb = (num_elements * 4) as f32 / (1024.0 * 1024.0);
-        let compression_ratio = f32_size_mb / actual_size_mb;
+        let _compression_ratio = f32_size_mb / actual_size_mb;
         
         // println!("Q4_K_S Format Size Details:");
         // println!("  Number of blocks: {}", num_blocks);

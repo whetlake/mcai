@@ -38,7 +38,7 @@ impl FormatImpl for Float32Format {
         let bytes_needed = num_elements * 4;
         
         // Calculate sizes for reporting
-        let actual_size_mb = bytes_needed as f32 / (1024.0 * 1024.0);
+        let _actual_size_mb = bytes_needed as f32 / (1024.0 * 1024.0);
         
         // println!("FLOAT32 Format Size Details:");
         // println!("  Total bytes needed: {} ({:.4} MB)", bytes_needed, actual_size_mb);

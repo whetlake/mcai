@@ -52,6 +52,17 @@ impl ForwardPass {
         let tensor_cache = TensorCache::new(Arc::clone(&model), Arc::clone(&backend));
         let shared_cache = Arc::new(Mutex::new(tensor_cache));
         
+        // --- Preload ALL tensors ---
+        println!("Preloading all model tensors...");
+        let all_tensor_names: Vec<&str> = model.tensors.iter().map(|ti| ti.name.as_str()).collect();
+        { // Scope for mutex guard
+            let mut cache_guard = shared_cache.lock()
+                .expect("Failed to lock tensor cache during preloading");
+            let (loaded_count, total_count) = cache_guard.preload(&all_tensor_names);
+            println!("Preloaded {}/{} tensors", loaded_count, total_count);
+        }
+        // --- End Preload ---
+
         // Create transformer with shared tensor cache
         let transformer = Transformer::new(
             Arc::clone(&model),
@@ -65,7 +76,7 @@ impl ForwardPass {
             Arc::clone(&shared_cache),
         );
         
-        let mut forward_pass = Self {
+        let forward_pass = Self {
             model,
             max_context_length,
             tensor_cache: shared_cache,
@@ -73,38 +84,7 @@ impl ForwardPass {
             transformer,
         };
         
-        // Preload global tensors used in every forward pass
-        forward_pass.preload_global_tensors();
-        
         forward_pass
-    }
-    
-    /// Preload global tensors that are used in every forward pass
-    /// 
-    /// While all model tensors are permanent (weights don't change during inference),
-    /// some tensors are used in every forward pass (global), while others are only used
-    /// when processing specific layers (layer-specific).
-    /// 
-    /// This method preloads the global tensors to improve performance.
-    fn preload_global_tensors(&mut self) {
-        // List of global tensors to preload
-        let global_tensors = [
-            // Token embedding table - needed for token embedding lookup (first step)
-            TOKEN_EMBEDDING_TENSOR,
-            // Output normalization - used in the final layer (before logits)
-            OUTPUT_NORM_TENSOR, 
-            // Output projection - used for final logits (last step)
-            OUTPUT_TENSOR,  
-        ];
-        
-        // Get mutable access to tensor cache
-        let mut tensor_cache = self.tensor_cache.lock()
-            .expect("Failed to lock tensor cache during preloading");
-        
-        // Preload tensors using the tensor cache
-        let (loaded_count, total_count) = tensor_cache.preload(&global_tensors);
-        
-        println!("Preloaded {}/{} global tensors", loaded_count, total_count);
     }
     
     /// Convert token IDs to embeddings by looking up in the embedding table
@@ -186,16 +166,7 @@ impl ForwardPass {
         let norm_weights = tensor_cache.get(OUTPUT_NORM_TENSOR)?;
         
         // We need the rms_norm function from Transformer because it directly uses the output of the transformer.
-        let normalized_output = self.transformer.rms_norm(&transformer_output, norm_weights)?; // Assuming rms_norm is accessible
-        
-        // Let's use the backend directly for now. We need to adapt rms_norm signature or create a tensor version.
-        // Current backend rms_norm works on slices. We need a Tensor version.
-        // Let's add a placeholder call and refine later.
-        // TODO: Implement or expose a tensor-based RMS norm function.
-        // let normalized_output = { // Placeholder block
-        //      eprintln!("  (Skipping actual RMS norm calculation for now - using transformer output)");
-        //      transformer_output // Use transformer_output directly as placeholder
-        // };
+        let normalized_output = self.transformer.rms_norm(&transformer_output, norm_weights)?;
         eprintln!("Normalized output shape: {:?}", normalized_output.shape());
 
         // For now, just return a placeholder token
