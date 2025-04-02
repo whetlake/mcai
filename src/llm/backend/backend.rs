@@ -91,6 +91,10 @@ pub trait Backend: Send + Sync + Debug {
         b: &[f32],
     ) -> Result<f32, Box<dyn Error + Send + Sync>>;
     
+    /// Applies the Sigmoid Linear Unit (SiLU) activation function in-place.
+    /// silu(x) = x * sigmoid(x) = x / (1 + exp(-x))
+    fn silu(&self, tensor: &mut Tensor) -> Result<(), Box<dyn Error + Send + Sync>>;
+    
     /// Applies Rotary Positional Embeddings (RoPE) in place.
     /// Operates on data assumed to be shaped [seq_len, num_heads, head_dim].
     fn apply_rope(
@@ -142,6 +146,13 @@ pub trait Backend: Send + Sync + Debug {
         &self,
         a: &Tensor, // Typically the larger tensor (e.g., matrix)
         b: &Tensor, // Typically the smaller tensor (e.g., bias vector)
+    ) -> Result<Tensor, Box<dyn Error + Send + Sync>>;
+
+    /// Perform element-wise multiplication C = A * B using Tensors, returning a new Tensor.
+    fn mul_tensors(
+        &self,
+        a: &Tensor,
+        b: &Tensor,
     ) -> Result<Tensor, Box<dyn Error + Send + Sync>>;
 
     /// Permutes the axes of a tensor's data.

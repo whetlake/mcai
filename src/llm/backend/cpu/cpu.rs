@@ -295,6 +295,16 @@ impl Backend for CpuBackend {
         Ok(a_array.dot(&b_array))
     }
 
+    /// Applies the Sigmoid Linear Unit (SiLU) activation function in-place.
+    fn silu(&self, tensor: &mut Tensor) -> Result<(), Box<dyn Error + Send + Sync>> {
+        let data = tensor.data_mut();
+        for x in data {
+            // silu(x) = x * sigmoid(x) = x / (1 + exp(-x))
+            *x = *x * (1.0 / (1.0 + (-*x).exp()));
+        }
+        Ok(())
+    }
+
     /// Applies Rotary Positional Embeddings (RoPE) using ndarray.
     fn apply_rope(
         &self,
@@ -661,6 +671,36 @@ impl Backend for CpuBackend {
         self.add(
             a.data(),
             b.data(), // Bias vector data
+            result_tensor.data_mut(),
+        )?;
+
+        Ok(result_tensor)
+    }
+
+    /// Perform element-wise multiplication C = A * B using Tensors, returning a new Tensor.
+    fn mul_tensors(
+        &self,
+        a: &Tensor,
+        b: &Tensor,
+    ) -> Result<Tensor, Box<dyn Error + Send + Sync>> {
+        let a_shape = a.shape();
+        let b_shape = b.shape();
+
+        // Ensure shapes are compatible for element-wise multiplication
+        if a_shape != b_shape {
+            return Err(format!(
+                "Shape mismatch for mul_tensors: A {:?} vs B {:?}",
+                a_shape, b_shape
+            ).into());
+        }
+
+        // Create the output tensor (using backend from tensor 'a')
+        let mut result_tensor = Tensor::zeros(a_shape.to_vec(), Arc::clone(a.backend()))?;
+
+        // Perform multiplication using the slice-based backend method
+        self.mul(
+            a.data(),
+            b.data(),
             result_tensor.data_mut(),
         )?;
 

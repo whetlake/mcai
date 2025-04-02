@@ -258,25 +258,53 @@ impl Transformer {
         let ffn_gate_weight_name = format!("blk.{}.ffn_gate.weight", block_idx);
         let ffn_gate_weight = tensor_cache.get(&ffn_gate_weight_name)
             .map_err(|e| format!("Failed to load FFN gate weights for block {}: {}", block_idx, e))?;
-        println!("    FFN Gate Weight shape: {:?}", ffn_gate_weight.shape());
-        println!("    Input (normalized_for_ffn) shape: {:?}", normalized_for_ffn.shape());
-        let gate_proj = self.backend.matmul_tensors(
-            &normalized_for_ffn, 
-            ffn_gate_weight, 
-            false, // transpose_a
-            false  // transpose_b (Assuming weight shape is [hidden_dim, feed_forward_dim])
-        )?;
-        println!("    FFN Gate projection shape: {:?}", gate_proj.shape());
+        let gate_proj = self.backend.matmul_tensors(&normalized_for_ffn, ffn_gate_weight, false, false)?;
+        println!("    FFN Gate projection shape: {:?}", gate_proj.shape()); // Optional debug print
 
-        // (Placeholder for further FFN steps)
         // 16b. Up Projection (W_up * x)
-        // 16c. Activation and Gating: SiLU(gate_proj) * up_proj
-        // 16d. Down Projection: result * W_down
-        // 17. Add Second Residual Connection 
+        println!("  Calculating FFN up projection");
+        let ffn_up_weight_name = format!("blk.{}.ffn_up.weight", block_idx);
+        let ffn_up_weight = tensor_cache.get(&ffn_up_weight_name)
+            .map_err(|e| format!("Failed to load FFN up weights for block {}: {}", block_idx, e))?;
+        let up_proj = self.backend.matmul_tensors(&normalized_for_ffn, ffn_up_weight, false, false)?;
+        println!("    FFN Up projection shape: {:?}", up_proj.shape()); // Optional debug print
 
-        // Return the gate_proj FOR NOW
-        println!("  Block {} FFN calculation incomplete. Returning gate_proj state.", block_idx + 1);
-        Ok(gate_proj)
+        // 16c. Activation and Gating (SwiGLU): gate_proj * SiLU(up_proj)
+        println!("  Applying SwiGLU activation: gate_proj * SiLU(up_proj)");
+
+        // Apply SiLU activation directly to up_proj in place using the backend.
+        let mut activated_up_proj = up_proj; // Rename for clarity, make mutable
+        self.backend.silu(&mut activated_up_proj)?;
+
+        // Perform element-wise multiplication: ffn_intermediate = gate_proj * activated_up_proj
+        let ffn_intermediate = self.backend.mul_tensors(&gate_proj, &activated_up_proj)?;
+
+        println!("    FFN intermediate result shape after SwiGLU: {:?}", ffn_intermediate.shape());
+
+        // 16d. Down Projection: result * W_down
+        println!("  Applying FFN down projection");
+        let ffn_down_weight_name = format!("blk.{}.ffn_down.weight", block_idx);
+        let ffn_down_weight = tensor_cache.get(&ffn_down_weight_name)
+            .map_err(|e| format!("Failed to load FFN down weights for block {}: {}", block_idx, e))?;
+            
+        // Perform the down projection: ffn_output = ffn_intermediate @ ffn_down_weight
+        let ffn_output = self.backend.matmul_tensors(
+            &ffn_intermediate, 
+            ffn_down_weight, 
+            false, // Do not transpose ffn_intermediate (A)
+            false  // Do not transpose ffn_down_weight (B)
+        )?;
+        println!("    FFN output shape after down projection: {:?}", ffn_output.shape());
+
+        // 17. Add Second Residual Connection
+        // Add the input that went into the FFN (residual_after_attn) 
+        // to the output of the FFN (ffn_output)
+        println!("  Adding second residual connection");
+        let final_block_output = self.backend.add_tensors(&residual_after_attn, &ffn_output)?;
+
+        // Return the final output of this transformer block
+        println!("  Block {} processing complete.", block_idx + 1);
+        Ok(final_block_output)
     }
 
     /// Apply RMS normalization to a tensor
