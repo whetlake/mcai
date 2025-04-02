@@ -13,7 +13,7 @@ pub struct ForwardPass {
     /// Maximum context length (adjusted from settings)
     max_context_length: usize,
     /// Tensor cache for loading and storing tensors
-    tensor_cache: Arc<Mutex<TensorCache>>,
+    tensor_cache: Arc<TensorCache>,
     /// Backend for tensor operations
     backend: Arc<Box<dyn Backend>>,
     /// Transformer for processing through layers
@@ -48,17 +48,15 @@ impl ForwardPass {
         
         println!("Using max_context_length: {}", max_context_length);
         
-        // Initialize tensor cache and wrap it in Arc<Mutex<_>>
+        // Initialize tensor cache (Mutex is now internal to TensorCache)
         let tensor_cache = TensorCache::new(Arc::clone(&model), Arc::clone(&backend));
-        let shared_cache = Arc::new(Mutex::new(tensor_cache));
+        let shared_cache = Arc::new(tensor_cache);
         
         // --- Preload ALL tensors ---
         println!("Preloading all model tensors...");
         let all_tensor_names: Vec<&str> = model.tensors.iter().map(|ti| ti.name.as_str()).collect();
-        { // Scope for mutex guard
-            let mut cache_guard = shared_cache.lock()
-                .expect("Failed to lock tensor cache during preloading");
-            let (loaded_count, total_count) = cache_guard.preload(&all_tensor_names);
+        { // Scope for using the cache directly, no lock needed here
+            let (loaded_count, total_count) = shared_cache.preload(&all_tensor_names);
             println!("Preloaded {}/{} tensors", loaded_count, total_count);
         }
         // --- End Preload ---
@@ -103,11 +101,11 @@ impl ForwardPass {
         
         println!("Converting {} tokens to embeddings", seq_len);
         
-        // Get access to tensor cache
-        let mut tensor_cache = self.tensor_cache.lock()
-            .map_err(|e| format!("Failed to lock tensor cache: {}", e))?;
+        // Get access to tensor cache (no longer needs to be mutable or locked here)
+        // self.tensor_cache is Arc<TensorCache>, get() takes &TensorCache
+        let tensor_cache = &*self.tensor_cache; // Dereference Arc to get &TensorCache
         
-        // Load the embedding table tensor
+        // Load the embedding table tensor using the &TensorCache reference
         let embedding_table = tensor_cache.get( TOKEN_EMBEDDING_TENSOR)?;
         let embedding_data = embedding_table.data();
         
@@ -155,28 +153,22 @@ impl ForwardPass {
         
         // Step 2: Process embeddings through transformer blocks
         eprintln!("Processing embeddings through transformer blocks...");
-        let transformer_output = self.transformer.forward(&embeddings)?;
+        let transformer_output = self.transformer.forward(&embeddings)?; // Corrected: Pass only embeddings
         eprintln!("Transformer output shape: {:?}", transformer_output.shape());
         
         // Step 3: Apply output normalization (RMSNorm)
         eprintln!("Applying output normalization...");
-        // Get access to tensor cache again (might be redundant if borrowed longer)
-        let mut tensor_cache = self.tensor_cache.lock()
-            .map_err(|e| format!("Failed to lock tensor cache for output norm: {}", e))?;
-        let norm_weights = tensor_cache.get(OUTPUT_NORM_TENSOR)?;
+        // Get access to tensor cache again (no longer needs mut or lock)
+        let tensor_cache = &*self.tensor_cache; // Dereference Arc to get &TensorCache
+        let norm_weights_arc = tensor_cache.get(OUTPUT_NORM_TENSOR)?; // Get Arc<Tensor>
         
         // We need the rms_norm function from Transformer because it directly uses the output of the transformer.
-        let normalized_output = self.transformer.rms_norm(&transformer_output, norm_weights)?;
+        // Dereference the Arc to pass &Tensor to rms_norm
+        let normalized_output = self.transformer.rms_norm(&transformer_output, &*norm_weights_arc)?; 
         eprintln!("Normalized output shape: {:?}", normalized_output.shape());
 
-        // For now, just return a placeholder token
-        // In a real implementation, we would:
-        // 1. Apply output normalization (Partially added above)
-        // 2. Project to vocabulary size (using normalized_output)
-        // 3. Apply softmax
-        // 4. Sample from the distribution
-        eprintln!("Using placeholder token 111 for now");
-        
+        // Step 4: Project to vocabulary size
+
         eprintln!("=== Token Prediction Complete ===\n");
 
         // Return the last token from input as a placeholder

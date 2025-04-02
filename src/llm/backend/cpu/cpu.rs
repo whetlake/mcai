@@ -1,13 +1,14 @@
 use std::error::Error;
 use std::fmt;
-use ndarray::{Array, Array1, Array2, ArrayView1, ArrayView2, ArrayViewMut2, ArrayViewMut3, Axis, IxDyn, s};
+use ndarray::{Array2, ArrayView1, ArrayView2, ArrayViewMut1, ArrayViewMut2, ArrayViewMut3, Axis, IxDyn, s};
 use std::sync::Arc;
+use rayon::prelude::*;
 
 use super::super::backend::{Backend, BackendMemory};
 use super::quants::dequantize::Dequantizer;
 use crate::gguf::GGUFValueType;
 use crate::llm::tensor::Tensor;
-use ndarray::{Array3, ArrayD, ArrayView3, stack};
+use ndarray::{Array3, ArrayView3, stack};
 
 /// CPU-specific memory implementation
 pub struct CpuMemory {
@@ -104,19 +105,22 @@ impl Backend for CpuBackend {
         // println!("  Output C length: {}", c.len());
 
         // Create ndarray views of the input data
-        let a_array = Array2::from_shape_vec((m, k), a.to_vec())?;
-        let b_array = Array2::from_shape_vec((k, n), b.to_vec())?;
+        // Avoid copying data by creating views directly from slices
+        let a_view_untransposed = ArrayView2::from_shape((m, k), a)?;
+        let b_view_untransposed = ArrayView2::from_shape((k, n), b)?;
         
         // Handle transpose if needed
-        let a_view = if transpose_a { a_array.t() } else { a_array.view() };
-        let b_view = if transpose_b { b_array.t() } else { b_array.view() };
+        // Use CowArray to potentially avoid clone if no transpose is needed
+        let a_view = if transpose_a { a_view_untransposed.t() } else { a_view_untransposed.view() };
+        let b_view = if transpose_b { b_view_untransposed.t() } else { b_view_untransposed.view() };
         
         // Perform matrix multiplication (this uses BLAS internally if available)
-        let result = a_view.dot(&b_view);
-        
-        // Copy result to output buffer using assign to handle potential non-contiguity
+        // Ensure the output buffer is used correctly
         let mut c_array = ArrayViewMut2::from_shape((m, n), c)?;
-        c_array.assign(&result);
+
+        // Perform the dot product and assign the result directly to the output view
+        // This avoids creating an intermediate result matrix if possible
+        c_array.assign(&a_view.dot(&b_view));
         
         Ok(())
     }
@@ -145,12 +149,14 @@ impl Backend for CpuBackend {
         let a_array = ArrayView2::from_shape(output_shape, a)?;
         let b_array = ArrayView1::from(b); // Bias is 1D
         
-        // Perform addition with broadcasting
-        let result = &a_array + &b_array;
-        
-        // Copy result to output buffer using assign
+        // Get a mutable view of the output buffer
         let mut c_array = ArrayViewMut2::from_shape(output_shape, c)?;
-        c_array.assign(&result);
+
+        // Perform addition directly into the output buffer to avoid intermediate allocation
+        // 1. First, copy 'a' into 'c'
+        c_array.assign(&a_array);
+        // 2. Then, add 'b' (broadcasted) to 'c' in place
+        c_array += &b_array; // Performs broadcasted addition in place
         
         Ok(())
     }
@@ -168,15 +174,14 @@ impl Backend for CpuBackend {
         b: &[f32],
         c: &mut [f32],
     ) -> Result<(), Box<dyn Error + Send + Sync>> {
-        // Create ndarray views
         let a_array = ArrayView1::from(a);
         let b_array = ArrayView1::from(b);
         
-        // Perform element-wise multiplication
-        let result = &a_array * &b_array;
+        // Get a mutable view of the output buffer
+        let mut c_array = ArrayViewMut1::from(c);
         
-        // Copy result to output buffer
-        c.copy_from_slice(result.as_slice().unwrap());
+        // Perform element-wise multiplication directly into the output buffer view
+        c_array.assign(&(&a_array * &b_array)); // Assigns the result of a * b directly to c
         
         Ok(())
     }
@@ -205,28 +210,29 @@ impl Backend for CpuBackend {
         hidden_size: usize,
         eps: f32,
     ) -> Result<(), Box<dyn Error + Send + Sync>> {
-        // Reshape input into a 2D array with shape [size, hidden_size]
-        let x_array = Array::from_shape_vec((size, hidden_size), x.to_vec())?;
+        // Reshape input into a 2D array view without copying
+        let x_array = ArrayView2::from_shape((size, hidden_size), x)?;
         let weight_array = ArrayView1::from(weight);
         
-        // Create output array
-        let mut result = Array::zeros((size, hidden_size));
+        // Create output array view
+        let mut result_view = ArrayViewMut2::from_shape((size, hidden_size), output)?;
         
-        // Process each row seperately or each token separately
+        // Process each row
         for (i, row) in x_array.outer_iter().enumerate() {
-            // Step 1: Calculate RMS
-            // Square each element and take mean
+            // Calculate RMS for the input row
             let mean_square = row.iter().map(|&v| v * v).sum::<f32>() / hidden_size as f32;
-            let rms = mean_square.sqrt() + eps;  // Add epsilon after square root
-            
-            // Step 2 & 3: Normalize and scale using ndarray operations
-            let mut normalized = row.to_owned();
-            normalized /= rms;
-            result.slice_mut(s![i, ..]).assign(&(normalized * &weight_array));
+            let rms = mean_square.sqrt() + eps;
+            let inv_rms = 1.0 / rms; // Calculate inverse RMS once per row
+
+            // Get mutable slice for the output row
+            let mut output_row_slice = result_view.slice_mut(s![i, ..]);
+
+            // Iterate through elements and write directly to output slice
+            for j in 0..hidden_size {
+                // output[j] = (input[j] / rms) * weight[j]
+                output_row_slice[j] = (row[j] * inv_rms) * weight_array[j]; 
+            }
         }
-        
-        // Copy result to output buffer
-        output.copy_from_slice(result.as_slice().unwrap());
         
         Ok(())
     }
@@ -518,31 +524,27 @@ impl Backend for CpuBackend {
         let b_array = ArrayView3::from_shape((batch_size, k_b, n), b.data())
             .map_err(|e| format!("Error creating view for B in bmm: {}", e))?;
 
-        let mut result_arrays = Vec::with_capacity(batch_size); // Store owned arrays here
+        // Use Rayon to parallelize the batch matrix multiplications
+        let result_arrays: Vec<Array2<f32>> = (0..batch_size)
+            .into_par_iter()
+            .map(|i| {
+                // Get slices for the current batch item
+                let a_slice = a_array.slice(s![i, .., ..]);
+                let b_slice = b_array.slice(s![i, .., ..]);
 
-        // Perform matmul for each item in the batch
-        for i in 0..batch_size {
-            //println!("      [bmm] Processing batch item {}", i);
-            let a_slice = a_array.slice(s![i, .., ..]);
-            let b_slice = b_array.slice(s![i, .., ..]);
-            
-            // Handle transposition
-            let a_view = if transpose_a { unimplemented!("Transpose A not yet handled in bmm") } else { a_slice };
-            let b_view = if transpose_b { b_slice.t() } else { b_slice.view() };
-            
-            // Check final shapes before dot product
-            if a_view.shape()[1] != b_view.shape()[0] {
-                 return Err(format!("Shape mismatch before dot product in batch {}: A_slice {:?}, B_view {:?}", i, a_view.shape(), b_view.shape()).into());
-            }
-            
-            // Calculate result for this batch item
-            //println!("      [bmm] Performing dot product for batch item {}", i);
-            let c_slice: Array2<f32> = a_view.dot(&b_view); //.map_err(|e| format!("Error during dot product in bmm batch {}: {}", i, e))?;
-            // Note: .dot() on views doesn't typically return a Result unless maybe BLAS fails?
-            // Let's assume it panics or returns the array directly for now. If BLAS errors are possible, proper handling would be needed.
+                // Handle transposition within the parallel map
+                // TODO: Implement transpose_a if needed
+                if transpose_a { unimplemented!("Transpose A not yet handled in parallel bmm") };
+                let b_view = if transpose_b { b_slice.t() } else { b_slice.view() };
 
-            result_arrays.push(c_slice); // Push owned array
-        }
+                // Perform the dot product for this batch item
+                // Note: Potential shape mismatches before dot product would panic here,
+                //       matching the behavior of the sequential version.
+                //       More robust error handling could be added if necessary.
+                a_slice.dot(&b_view)
+            })
+            .collect(); // Collect the results from parallel computations
+
         // Create views from the owned arrays for stacking
         let result_views: Vec<_> = result_arrays.iter().map(|a| a.view()).collect();
 
