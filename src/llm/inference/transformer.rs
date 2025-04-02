@@ -2,7 +2,7 @@ use std::error::Error;
 use std::sync::{Arc, Mutex};
 use crate::llm::model::Model;
 use crate::llm::backend::Backend;
-use crate::llm::tensor::{Tensor, matmul, add};
+use crate::llm::tensor::Tensor;
 use super::TensorCache;
 
 
@@ -242,14 +242,29 @@ impl Transformer {
 
         // 11. Multiply by Value: Output = Attention_Probs @ V
         println!("  Multiplying by Value");
-        let output = self.backend.bmm(&attention_probs, &value_repeated, false, false)?;
-        println!("    Output shape: {:?}", output.shape());
+        let weighted_values = self.backend.bmm(&attention_probs, &value_repeated, false, false)?;
+        println!("    Weighted values shape: {:?}", weighted_values.shape());
 
-        // (Remaining steps: Combine heads, final projection, residual...)
+        // 12. Combine Heads: Transpose and reshape back to [seq_len, hidden_dim]
+        println!("  Combining heads");
+        // Current shape: [head_count, seq_len, head_dim]
+        // Final shape:   [seq_len, hidden_dim]
+        let combined_heads = weighted_values.permute_and_reshape(
+            &[1, 0, 2], // Permute axes: [H, S, D] -> [S, H, D]
+            vec![seq_len, self.hidden_dim] // Target shape
+        )?;
+        println!("    Combined heads final shape: {:?}", combined_heads.shape());
 
-        // For now, return the output tensor for inspection
-        println!("  Block {} attention score calculation partially complete", block_idx + 1);
-        Ok(output) // Return output instead of normalized_state
+        // (13. Final Projection - Placeholder)
+        println!("  (Skipping final output projection for now)");
+
+        // (14. Add Residual Connection - Placeholder)
+        println!("  (Skipping residual connection for now)");
+
+        // Return the combined heads tensor
+        println!("  Block {} attention calculation steps 11 & 12 complete", block_idx + 1);
+        // This tensor now has the shape [seq_len, hidden_dim], suitable for the next block
+        Ok(combined_heads)
     }
 
     /// Apply RMS normalization to a tensor
@@ -268,7 +283,7 @@ impl Transformer {
     ///
     /// # Returns
     /// * Result<Tensor, Box<dyn Error + Send + Sync>> - Normalized tensor
-    fn rms_norm(&self, input_tensor: &Tensor, norm_weights: &Tensor) -> Result<Tensor, Box<dyn Error + Send + Sync>> {
+    pub(super) fn rms_norm(&self, input_tensor: &Tensor, norm_weights: &Tensor) -> Result<Tensor, Box<dyn Error + Send + Sync>> {
         // Get shape information
         let shape = input_tensor.shape();
         let seq_len = shape[0];
@@ -301,28 +316,29 @@ impl Transformer {
         // Load weights and bias for this block based on projection_type ("q", "k", or "v")
         let weight_name = format!("blk.{}.attn_{}.weight", block_idx, projection_type);
         let bias_name = format!("blk.{}.attn_{}.bias", block_idx, projection_type);
-        
+
         println!("{} projection shapes:", projection_type.to_uppercase());
         println!("  normalized_input shape: {:?}", normalized_input.shape());
-        
+
         // Load weights first
         let weight: &Tensor = tensor_cache.get(&weight_name)
             .map_err(|e: Box<dyn Error + Send + Sync>| format!("Failed to load {} weights for block {}: {}", projection_type, block_idx, e))?;
         println!("  {} weight shape: {:?}", projection_type, weight.shape());
-        
-        // Perform matrix multiplication: X * W
-        let mut proj_result = matmul(normalized_input, weight, false, false)?;
-        println!("  {} after matmul shape: {:?}", projection_type, proj_result.shape());
-        
-        // Load bias and add it: (X * W) + b
+
+        // Perform matrix multiplication: X * W using the backend's tensor method
+        let proj_matmul_result = self.backend.matmul_tensors(normalized_input, weight, false, false)?;
+        println!("  {} after matmul shape: {:?}", projection_type, proj_matmul_result.shape());
+
+        // Load bias
         let bias: &Tensor = tensor_cache.get(&bias_name)
             .map_err(|e| format!("Failed to load {} bias for block {}: {}", projection_type, block_idx, e))?;
         println!("  {} bias shape: {:?}", projection_type, bias.shape());
-        
-        proj_result = add(&proj_result, bias)?;
-        println!("  final {} shape: {:?}", projection_type, proj_result.shape());
-        
-        Ok(proj_result)
+
+        // Perform addition: (X * W) + b using the backend's tensor method
+        let final_result = self.backend.add_tensors(&proj_matmul_result, bias)?;
+        println!("  final {} shape: {:?}", projection_type, final_result.shape());
+
+        Ok(final_result)
     }
 
     /// Applies Rotary Positional Embeddings (RoPE) to a tensor in place.

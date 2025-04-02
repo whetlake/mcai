@@ -178,10 +178,30 @@ impl ForwardPass {
         let transformer_output = self.transformer.forward(&embeddings)?;
         eprintln!("Transformer output shape: {:?}", transformer_output.shape());
         
+        // Step 3: Apply output normalization (RMSNorm)
+        eprintln!("Applying output normalization...");
+        // Get access to tensor cache again (might be redundant if borrowed longer)
+        let mut tensor_cache = self.tensor_cache.lock()
+            .map_err(|e| format!("Failed to lock tensor cache for output norm: {}", e))?;
+        let norm_weights = tensor_cache.get(OUTPUT_NORM_TENSOR)?;
+        
+        // We need the rms_norm function from Transformer because it directly uses the output of the transformer.
+        let normalized_output = self.transformer.rms_norm(&transformer_output, norm_weights)?; // Assuming rms_norm is accessible
+        
+        // Let's use the backend directly for now. We need to adapt rms_norm signature or create a tensor version.
+        // Current backend rms_norm works on slices. We need a Tensor version.
+        // Let's add a placeholder call and refine later.
+        // TODO: Implement or expose a tensor-based RMS norm function.
+        // let normalized_output = { // Placeholder block
+        //      eprintln!("  (Skipping actual RMS norm calculation for now - using transformer output)");
+        //      transformer_output // Use transformer_output directly as placeholder
+        // };
+        eprintln!("Normalized output shape: {:?}", normalized_output.shape());
+
         // For now, just return a placeholder token
         // In a real implementation, we would:
-        // 1. Apply output normalization
-        // 2. Project to vocabulary size
+        // 1. Apply output normalization (Partially added above)
+        // 2. Project to vocabulary size (using normalized_output)
         // 3. Apply softmax
         // 4. Sample from the distribution
         eprintln!("Using placeholder token 111 for now");

@@ -560,6 +560,118 @@ impl Backend for CpuBackend {
         println!("    [bmm] Creating output tensor.");
         Tensor::from_backend_memory(new_memory, output_shape, Arc::clone(a.backend()))
     }
+
+    /// Permutes axes and reshapes the tensor's data in one operation.
+    fn permute_and_reshape(
+        &self,
+        data: &[f32],
+        current_shape: &[usize],
+        new_axes: &[usize],
+        target_shape: &[usize],
+    ) -> Result<Box<dyn BackendMemory>, Box<dyn Error + Send + Sync>> {
+        // Create an ndarray view with the original shape
+        let view = ndarray::ArrayViewD::from_shape(IxDyn(current_shape), data)?;
+
+        // Permute the axes
+        let permuted_view = view.permuted_axes(IxDyn(new_axes));
+
+        // Create a new owned array with the data in the permuted order (makes it contiguous)
+        let permuted_array: ndarray::ArrayD<f32> = permuted_view.to_owned();
+
+        // Validate the total number of elements matches the target shape
+        let expected_elements: usize = target_shape.iter().product();
+        if permuted_array.len() != expected_elements {
+            return Err(format!(
+                "Permute/Reshape error: Element count mismatch. Permuted has {} elements, target shape {:?} requires {}",
+                permuted_array.len(), target_shape, expected_elements
+            ).into());
+        }
+
+        // Convert the owned array's data into a Vec<f32>
+        let permuted_data = permuted_array.into_raw_vec_and_offset().0;
+
+        // Allocate new backend memory (size based on target_shape) and copy the contiguous permuted data
+        let mut new_memory = self.allocate_memory(expected_elements)?;
+        new_memory.as_mut_slice().copy_from_slice(&permuted_data);
+
+        Ok(new_memory)
+    }
+
+    /// Perform matrix multiplication C = A * B using Tensors, returning a new Tensor.
+    fn matmul_tensors(
+        &self,
+        a: &Tensor,
+        b: &Tensor,
+        transpose_a: bool,
+        transpose_b: bool,
+    ) -> Result<Tensor, Box<dyn Error + Send + Sync>> {
+        let a_shape = a.shape();
+        let b_shape = b.shape();
+
+        if a_shape.len() != 2 || b_shape.len() != 2 {
+            return Err("matmul_tensors currently only supports 2D tensors".into());
+        }
+
+        // Extract dimensions based on potential transposition
+        let m = if transpose_a { a_shape[1] } else { a_shape[0] };
+        let k_a = if transpose_a { a_shape[0] } else { a_shape[1] };
+        let k_b = if transpose_b { b_shape[1] } else { b_shape[0] };
+        let n = if transpose_b { b_shape[0] } else { b_shape[1] };
+
+        // Verify shapes are compatible for multiplication
+        if k_a != k_b {
+            return Err(format!(
+                "Matrix multiplication dimension mismatch: A({}) vs B({}) (A shape: {:?}, B shape: {:?}, transpose_a: {}, transpose_b: {})",
+                k_a, k_b, a_shape, b_shape, transpose_a, transpose_b
+            ).into());
+        }
+
+        // Determine output shape
+        let output_shape = vec![m, n];
+
+        // Create output tensor (backend is cloned from tensor 'a')
+        let mut result_tensor = Tensor::zeros(output_shape, Arc::clone(a.backend()))?;
+
+        // Perform matrix multiplication using the backend's slice-based method
+        self.matmul(
+            a.data(),
+            b.data(),
+            result_tensor.data_mut(),
+            m, n, k_a, // Use k_a as the inner dimension 'k'
+            transpose_a,
+            transpose_b,
+        )?;
+
+        Ok(result_tensor)
+    }
+
+    /// Perform element-wise addition C = A + B using Tensors (with broadcasting for B), returning a new Tensor.
+    fn add_tensors(
+        &self,
+        a: &Tensor, // Typically the larger tensor (e.g., matrix)
+        b: &Tensor, // Typically the smaller tensor (e.g., bias vector)
+    ) -> Result<Tensor, Box<dyn Error + Send + Sync>> {
+        let a_shape = a.shape();
+        let b_shape = b.shape();
+
+        // Basic broadcasting check (assuming B is 1D and matches A's last dimension)
+        // The backend's `add` implementation handles the actual broadcasting logic.
+        if a_shape.len() < 1 || b_shape.len() != 1 || a_shape.last() != b_shape.first() {
+             return Err(format!("Shape mismatch for broadcasting add: A {:?} vs B {:?}", a_shape, b_shape).into());
+        }
+
+        // Output tensor has the same shape as A
+        let mut result_tensor = Tensor::zeros(a_shape.to_vec(), Arc::clone(a.backend()))?;
+
+        // Perform addition using the backend's slice-based method
+        self.add(
+            a.data(),
+            b.data(), // Bias vector data
+            result_tensor.data_mut(),
+        )?;
+
+        Ok(result_tensor)
+    }
 }
 
 #[cfg(test)]

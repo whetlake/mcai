@@ -128,6 +128,22 @@ pub trait Backend: Send + Sync + Debug {
         transpose_b: bool, // Typically true for K
     ) -> Result<Tensor, Box<dyn Error + Send + Sync>>;
 
+    /// Perform matrix multiplication C = A * B using Tensors, returning a new Tensor.
+    fn matmul_tensors(
+        &self,
+        a: &Tensor,
+        b: &Tensor,
+        transpose_a: bool,
+        transpose_b: bool,
+    ) -> Result<Tensor, Box<dyn Error + Send + Sync>>;
+
+    /// Perform element-wise addition C = A + B using Tensors (with broadcasting for B), returning a new Tensor.
+    fn add_tensors(
+        &self,
+        a: &Tensor, // Typically the larger tensor (e.g., matrix)
+        b: &Tensor, // Typically the smaller tensor (e.g., bias vector)
+    ) -> Result<Tensor, Box<dyn Error + Send + Sync>>;
+
     /// Permutes the axes of a tensor's data.
     /// Returns a new BackendMemory buffer with the permuted data.
     fn permute(
@@ -135,6 +151,16 @@ pub trait Backend: Send + Sync + Debug {
         data: &[f32],
         current_shape: &[usize],
         new_axes: &[usize],
+    ) -> Result<Box<dyn BackendMemory>, Box<dyn Error + Send + Sync>>;
+
+    /// Permutes axes and reshapes the tensor's data in one operation.
+    /// Returns a new BackendMemory buffer with the data in the final layout.
+    fn permute_and_reshape(
+        &self,
+        data: &[f32],
+        current_shape: &[usize],
+        new_axes: &[usize],
+        target_shape: &[usize],
     ) -> Result<Box<dyn BackendMemory>, Box<dyn Error + Send + Sync>>;
 
     /// Dequantizes tensor data from its compressed format to f32 values

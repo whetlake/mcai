@@ -157,6 +157,42 @@ impl Tensor {
             name: self.name.clone(), // Consider updating the name if desired
         })
     }
+
+    /// Returns a new tensor with its axes permuted and reshaped.
+    pub fn permute_and_reshape(&self, new_axes: &[usize], target_shape: Vec<usize>) -> Result<Self, Box<dyn Error + Send + Sync>> {
+        // Basic validation
+        if self.shape.len() != new_axes.len() {
+            return Err(format!(
+                "Permutation error: Tensor has {} dimensions ({:?}), but {} new axes were provided ({:?})",
+                self.shape.len(), self.shape, new_axes.len(), new_axes
+            ).into());
+        }
+        let permuted_element_count: usize = self.shape.iter().product();
+        let target_element_count: usize = target_shape.iter().product();
+        if permuted_element_count != target_element_count {
+             return Err(format!(
+                "Reshape error: Element count mismatch. Original shape {:?} has {}, target shape {:?} requires {}",
+                self.shape, permuted_element_count, target_shape, target_element_count
+            ).into());
+        }
+        // (Could add more axis validation as in `permute`)
+
+        // Call the backend to perform the combined operation
+        let new_memory = self.backend.permute_and_reshape(
+            self.data(),
+            &self.shape,
+            new_axes,
+            &target_shape
+        )?;
+
+        // Create the new tensor with the target shape
+        Ok(Self {
+            backend: Arc::clone(&self.backend),
+            memory: new_memory,
+            shape: target_shape,
+            name: self.name.clone(),
+        })
+    }
 }
 
 impl fmt::Debug for Tensor {
