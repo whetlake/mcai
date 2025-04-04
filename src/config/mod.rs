@@ -19,6 +19,15 @@ pub struct InferenceConfig {
     pub max_tokens: usize,
     /// Size of the context window for inference
     pub context_size: usize,
+    /// Number of layers to offload to GPU (0 = CPU only). Automatically uses Metal on macOS if > 0.
+    #[serde(default = "default_n_gpu_layers")]
+    pub n_gpu_layers: u32,
+    /// Use memory mapping (mmap) if possible (reduces initial RAM usage).
+    #[serde(default = "default_use_mmap")]
+    pub use_mmap: bool,
+    /// Force the system to keep the model in RAM (mlock). Requires sufficient RAM.
+    #[serde(default = "default_use_mlock")]
+    pub use_mlock: bool,
 }
 
 /// Configuration for the HTTP server
@@ -55,6 +64,11 @@ pub struct Settings {
     /// Logging-related settings
     pub logging: LoggingConfig,
 }
+
+// Default functions for serde attributes within InferenceConfig
+fn default_n_gpu_layers() -> u32 { 0 } // Default to CPU only
+fn default_use_mmap() -> bool { true }  // Default to using mmap
+fn default_use_mlock() -> bool { false } // Default to not using mlock
 
 /// Implementation for loading and parsing configuration
 impl Settings {
@@ -139,6 +153,9 @@ impl Settings {
                 "context_size must be greater than 0".to_string()
             ));
         }
+
+        // Validate n_gpu_layers (already u32, so >= 0)
+        // No specific upper bound validation here, llama.cpp might handle it.
 
         // Validate server port range
         if !(1..=65535).contains(&self.server.port) {

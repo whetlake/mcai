@@ -1,9 +1,11 @@
 use std::error::Error;
 use std::sync::Arc;
 use crate::llm::session::InferenceContext;
-use crate::llm::model::{Model, ModelDetails};
+use crate::llm::model::modelmetadata::ModelMetadata;
+use crate::llm::model::ModelDetails;
 use crate::llm::registry::ModelRegistry;
 use crate::gguf::TensorInfo;
+use llama_cpp::{LlamaModel, LlamaParams};
 use std::sync::RwLock;
 use crate::config::Settings;
 
@@ -15,8 +17,10 @@ use crate::config::Settings;
 pub struct InferenceEngine {
     /// Currently selected model label (if any)
     pub current_model: RwLock<Option<String>>,
-    /// Currently loaded model data (if any)
-    pub loaded_model: RwLock<Option<Arc<Model>>>,
+    /// Static GGUF metadata/tensor info for the active model
+    pub active_metadata: RwLock<Option<Arc<ModelMetadata>>>,
+    /// Active llama_cpp model instance used for inference
+    pub active_model: RwLock<Option<Arc<LlamaModel>>>,
     /// Inference context for the current model
     pub inference_context: RwLock<Option<InferenceContext>>,
     /// Model registry for managing available models
@@ -35,7 +39,8 @@ impl InferenceEngine {
     pub fn new(registry: Arc<ModelRegistry>, settings: Settings) -> Self {
         Self {
             current_model: RwLock::new(None),
-            loaded_model: RwLock::new(None),
+            active_metadata: RwLock::new(None),
+            active_model: RwLock::new(None),
             inference_context: RwLock::new(None),
             model_registry: registry,
             settings,
@@ -60,8 +65,8 @@ impl InferenceEngine {
         // Create the full path to the model file
         let model_path = self.model_registry.get_model_path(&model_entry.filename);
 
-        // Load the model
-        let model = Model::load(
+        // Load the model (using original GGUFReader based Model::load)
+        let gguf_model = ModelMetadata::load(
             model_entry.label.clone(),
             model_entry.name.clone(),
             model_entry.size.clone(),
@@ -70,41 +75,70 @@ impl InferenceEngine {
             model_path.clone(),
         )?;
         
-        // Get metadata from the model
-        let metadata: Vec<(String, String, String)> = model.metadata
+        // Get metadata from the GGUF model for ModelDetails
+        let metadata: Vec<(String, String, String)> = gguf_model.metadata
             .iter()
             .map(|(key, (type_str, value))| (key.clone(), type_str.clone(), value.to_string()))
             .collect();
 
-        // Set the current model
+        // Set the current model which is the label of the model
         {
             let mut current_model = self.current_model.write().map_err(|e| e.to_string())?;
             *current_model = Some(model_entry.label.clone());
         }
         
-        // Set the loaded model
-        let model_arc = Arc::new(model);
+        // Set the active metadata (GGUF info)
+        let gguf_model_arc = Arc::new(gguf_model);
         {
-            let mut loaded_model = self.loaded_model.write().map_err(|e| e.to_string())?;
-            *loaded_model = Some(Arc::clone(&model_arc));
+            let mut active_metadata = self.active_metadata.write().map_err(|e| e.to_string())?;
+            *active_metadata = Some(Arc::clone(&gguf_model_arc));
         }
         
-        // Create inference context with settings
+        // Clone details needed for ModelDetails *before* gguf_model_arc might be moved/used elsewhere
+        let model_size = gguf_model_arc.size.clone();
+        let model_architecture = gguf_model_arc.architecture.clone();
+        let model_tensor_count = gguf_model_arc.tensors.len() as u64;
+        
+        // Now, load the model again using llama_cpp for actual inference
+        tracing::info!("Loading model via llama_cpp: {}", model_path.display());
+        
+        // Configure LlamaParams from settings
+        let llama_params = LlamaParams {
+            n_gpu_layers: self.settings.inference.n_gpu_layers,
+            use_mmap: self.settings.inference.use_mmap,
+            use_mlock: self.settings.inference.use_mlock,
+            // Keep other params as default for now, adjust if needed
+            ..Default::default()
+        };
+
+        tracing::info!("Using LlamaParams: n_gpu_layers={}, use_mmap={}, use_mlock={}", 
+            llama_params.n_gpu_layers, llama_params.use_mmap, llama_params.use_mlock);
+            
+        let active_model = LlamaModel::load_from_file(&model_path, llama_params)
+            .map_err(|e| format!("Failed to load model with llama_cpp: {}", e))?;
+        let active_model_arc = Arc::new(active_model);
+        {
+            let mut active_model = self.active_model.write().map_err(|e| e.to_string())?;
+            *active_model = Some(Arc::clone(&active_model_arc));
+            tracing::info!("Successfully loaded model via llama_cpp.");
+        }
+        
+        // Create inference context with settings, passing the active llama_cpp model
         {
             let mut inference_context = self.inference_context.write().map_err(|e| e.to_string())?;
-            *inference_context = Some(InferenceContext::new(Arc::clone(&model_arc), &self.settings)?);
+            *inference_context = Some(InferenceContext::new(active_model_arc, &self.settings)?);
         }
         
-        // Return the model details
+        // Return the model details (populated from gguf_model)
         Ok(ModelDetails {
             number: model_entry.number,
             label: model_entry.label,
             name: model_entry.name,
-            size: model_entry.size,
-            architecture: model_entry.architecture,
+            size: model_size,
+            architecture: model_architecture,
             quantization: model_entry.quantization,
             added_date: model_entry.added_date,
-            tensor_count: model_entry.tensor_count,
+            tensor_count: model_tensor_count,
             filename: model_entry.filename,
             directory: self.model_registry.models_dir.to_string_lossy().to_string(),
             metadata,
@@ -165,8 +199,13 @@ impl InferenceEngine {
         }
         
         {
-            let mut loaded_model = self.loaded_model.write().map_err(|e| e.to_string())?;
-            *loaded_model = None;
+            let mut active_metadata = self.active_metadata.write().map_err(|e| e.to_string())?;
+            *active_metadata = None;
+        }
+        
+        {
+            let mut active_model = self.active_model.write().map_err(|e| e.to_string())?;
+            *active_model = None;
         }
         
         {
@@ -188,11 +227,11 @@ impl InferenceEngine {
             return Err("No model attached".into());
         }
 
-        // Get the loaded model
-        let loaded_model = self.loaded_model.read().map_err(|e| e.to_string())?;
-        let model = loaded_model.as_ref().ok_or("No model loaded")?;
+        // Get the active metadata
+        let active_metadata_guard = self.active_metadata.read().map_err(|e| e.to_string())?;
+        let model = active_metadata_guard.as_ref().ok_or("No model active metadata")?;
 
-        // Get metadata from the model
+        // Get metadata from the GGUF model
         let metadata: Vec<(String, String, String)> = model.metadata
             .iter()
             .map(|(key, (type_str, value))| (key.clone(), type_str.clone(), value.to_string()))
@@ -231,9 +270,9 @@ impl InferenceEngine {
             return Err("No model attached".into());
         }
 
-        // Get the loaded model
-        let loaded_model = self.loaded_model.read().map_err(|e| e.to_string())?;
-        let model = loaded_model.as_ref().ok_or("No model loaded")?;
+        // Get the active metadata
+        let active_metadata_guard = self.active_metadata.read().map_err(|e| e.to_string())?;
+        let model = active_metadata_guard.as_ref().ok_or("No model active metadata")?;
 
         // Get tensor information
         Ok(model.tensors.clone())

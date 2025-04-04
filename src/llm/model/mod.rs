@@ -1,5 +1,4 @@
-pub mod model;
 pub mod types;
+pub mod modelmetadata;
 
-pub use model::Model;
 pub use types::ModelDetails;

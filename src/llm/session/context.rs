@@ -1,142 +1,105 @@
 use std::sync::Arc;
 use std::error::Error;
-use crate::llm::model::Model;
-use crate::llm::tokenizer::Tokenizer;
+use llama_cpp::{LlamaModel, LlamaSession, SessionParams, Token};
+use llama_cpp::standard_sampler::StandardSampler;
 use crate::config::Settings;
-use crate::llm::inference::ForwardPass;
-use crate::llm::backend;
+use std::sync::Mutex;
 
-/// Context for running inference with the model
+/// Context for running inference with the model, managing the llama_cpp session.
 pub struct InferenceContext {
-    /// The loaded model
-    model: Arc<Model>,
-    /// The tokenizer for this model
-    tokenizer: Tokenizer,
-    /// Current context window
-    context: Vec<u32>,
+    llama_model: Arc<LlamaModel>,
+    session: Mutex<LlamaSession>,
     /// Maximum context size
     max_context_size: usize,
-    /// Temperature for sampling (0.0-1.0)
+    /// Temperature for sampling (0.0-1.0) - currently unused, sampler takes defaults
     temperature: f32,
     /// Maximum number of tokens to generate
     max_tokens: usize,
-    /// Forward pass for token prediction
-    forward_pass: ForwardPass,
 }
 
 impl InferenceContext {
-    pub fn new(model: Arc<Model>, settings: &Settings) -> Result<Self, Box<dyn Error + Send + Sync>> {
-        // Create the tokenizer
-        let tokenizer = Tokenizer::new(model.architecture.clone(), &model.metadata)?;
-        
+    pub fn new(llama_model_arc: Arc<LlamaModel>, settings: &Settings) -> Result<Self, Box<dyn Error + Send + Sync>> {
         // Get requested context size from settings, or use model's default
-        let requested_context_size = settings.inference.context_size;
-        
-        // Make sure we don't exceed the model's maximum context length
-        let max_context_size = if requested_context_size > model.params.model_context_length {
-            println!("WARNING: Requested context size {} exceeds model's maximum context length {}, using model's maximum",
-                requested_context_size, model.params.model_context_length);
-            model.params.model_context_length
-        } else {
-            requested_context_size
+        // Note: llama_cpp session params might have its own way to determine max context
+        let n_ctx = settings.inference.context_size as u32; // Convert to u32 for SessionParams
+        let session_params = SessionParams {
+            n_ctx: n_ctx, // Pass u32 directly
+            n_batch: 512, // Default batch size, can be configured
+            // Set other SessionParams fields as needed (e.g., seeds, threads)
+            ..Default::default() // Use defaults for other params
         };
-        
-        // Create a backend for tensor operations
-        let backend = backend::create_backend();
-        
-        // Create forward pass with the adjusted context length
-        let forward_pass: ForwardPass = ForwardPass::new(Arc::clone(&model), backend, Some(max_context_size));
-        
+
+        // Create the LlamaSession
+        tracing::info!("Creating LlamaSession with context size: {}", n_ctx);
+        let session = llama_model_arc.create_session(session_params)
+            .map_err(|e| format!("Failed to create LlamaSession: {}", e))?;
+        tracing::info!("LlamaSession created successfully.");
+
+        // Store n_ctx for reference (max_context_size might differ from session's internal limit)
+        let max_context_size = n_ctx as usize;
+
         Ok(Self {
-            model,
-            tokenizer,
-            context: Vec::new(),
+            llama_model: llama_model_arc,
+            session: Mutex::new(session),
             max_context_size,
             temperature: settings.inference.temperature,
             max_tokens: settings.inference.max_tokens,
-            forward_pass,
         })
     }
 
     /// Processes input text and generates a response
+    /// Uses the internal LlamaSession to handle tokenization, inference, and decoding.
     pub fn process_input(&mut self, input: &str) -> Result<String, Box<dyn Error + Send + Sync>> {
-        // Step 1: Tokenize input
-        let input_tokens = self.tokenizer.encode(input)?;
-        
-        // Step 2: Update context window
-        self.update_context(&input_tokens)?;
-        
-        // Step 3: Generate response tokens
-        let response_tokens = self.generate_tokens()?;
+        tracing::info!("Processing input: \"{}\"", input);
 
-        // Step 4: Decode response
-        let response = self.tokenizer.decode(&response_tokens)?;
+        // Lock the session mutex to get mutable access
+        let mut session_guard = self.session.lock()
+            .map_err(|e| format!("Failed to lock session mutex: {}", e))?;
 
-        println!("Input tokens: {:?}", input_tokens);
-        println!("Response output: {}", response);
+        // Feed the prompt - Use the guard to call the method
+        session_guard.advance_context(input)
+            .map_err(|e| format!("Failed to advance context: {}", e))?;
+        tracing::info!("Context advanced with input prompt.");
 
-        
-        Ok(response)
-    }
+        let max_tokens = self.max_tokens; // Use configured max tokens
+        // Start completion generation - Use the guard
+        let sampler = StandardSampler::default(); // Can configure sampler here
+        let completions_handle = session_guard.start_completing_with(sampler, max_tokens)?; // Handle potential error first
+        tracing::info!("Started completion generation for max {} tokens.", max_tokens);
 
+        // Step 3: Collect generated tokens (ignoring potential errors and decoding for now)
+        let mut generated_tokens: Vec<u32> = Vec::new(); // Store token IDs
+        let mut generated_count = 0;
 
-    fn update_context(&mut self, new_tokens: &[u32]) -> Result<(), Box<dyn Error + Send + Sync>> {
-        // Add new tokens to context
-        self.context.extend(new_tokens.iter().cloned());
-        
-        // Trim context if it exceeds max size
-        if self.context.len() > self.max_context_size {
-            let excess = self.context.len() - self.max_context_size;
-            self.context.drain(..excess);
-        }
-        
-        Ok(())
-    }
-
-    /// Generates new tokens based on the current context
-    fn generate_tokens(&mut self) -> Result<Vec<u32>, Box<dyn Error + Send + Sync>> {
-        let mut generated_tokens = Vec::new();
-        let mut current_context = self.context.clone();
-        
-        // Get EOS token ID from tokenizer metadata
-        let eos_token_id = self.tokenizer.get_eos_token_id();
-        
-        // Generate tokens until we hit max_tokens or EOS
-        let max_predictions = 10;  // Limit to 10 predictions for testing
-        eprintln!("\n=== Starting Token Generation ===");
-        eprintln!("Initial context: {:?}", current_context);
-        
-        while generated_tokens.len() < max_predictions {
-            eprintln!("\nGenerating token {}/{}", generated_tokens.len() + 1, max_predictions);
-            
-            // Get next token prediction
-            let next_token = self.predict_next_token(&current_context)?;
-            eprintln!("Predicted token: {}", next_token);
-            
-            // Add to generated tokens
-            generated_tokens.push(next_token);
-            
-            // Update context for next prediction
-            current_context.push(next_token);
-            
-            // Check for EOS token
-            if next_token == eos_token_id {
-                eprintln!("EOS token detected, stopping generation");
+        // Iterate directly on the handle, assuming it yields Token directly
+        // (Error handling for the stream might be implicit or require different handling)
+        for token in completions_handle {
+            // TODO: Add error handling for the stream if necessary
+            generated_tokens.push(token.0 as u32); // Access tuple struct field 0 for the ID, cast to u32
+            generated_count += 1;
+            if generated_count >= max_tokens {
+                tracing::warn!("Reached max token limit ({}) during generation.", max_tokens);
                 break;
             }
         }
-        
-        eprintln!("\n=== Token Generation Complete ===");
-        eprintln!("Generated {} tokens", generated_tokens.len());
-        eprintln!("Final context: {:?}", current_context);
-        
-        Ok(generated_tokens)
-    }
 
-    /// Predicts the next token given the current context
-    fn predict_next_token(&mut self, context: &[u32]) -> Result<u32, Box<dyn Error + Send + Sync>> {
-        // Use the ForwardPass's predict_next_token method directly
-        self.forward_pass.predict_next_token(context)
-    }
+        println!(); // Add a newline after generation finishes
+        tracing::info!("Completion finished. Collected {} tokens (IDs: {:?}).", generated_count, generated_tokens);
 
+        // Step 4: Decode the generated tokens into a response string
+        let mut response_string = String::new();
+        for token_id in generated_tokens {
+            // Convert u32 ID back to Token tuple struct (i32,)
+            let token = Token(token_id as i32);
+            // Use the llama_model to decode the Token struct
+            // Assuming token_to_piece takes Token and returns Vec<u8> directly (or similar)
+            // Error handling needs verification based on actual API
+            let bytes = self.llama_model.token_to_piece(token); // Assuming direct Vec<u8> return
+            // TODO: Verify error handling for token_to_piece if it can fail
+
+            // Assuming token_to_piece returns String directly
+            response_string.push_str(&bytes); // Append the resulting string piece
+        }
+        Ok(response_string) // Return the fully decoded string
+    }
 } 

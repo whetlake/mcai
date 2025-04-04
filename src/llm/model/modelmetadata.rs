@@ -6,14 +6,13 @@ use std::fs::File;
 use std::collections::BTreeMap;
 use crate::gguf::{GGUFReader, TensorInfo, GGUFValue, GGUFError};
 use crate::llm::model::types::ModelParameters;
-use crate::llm::tensor::utils::calculate_tensor_size;
 use tracing;
 
-/// Represents a loaded model in memory.
+/// Represents the static metadata and tensor structure loaded from a GGUF file.
 ///
 /// This struct contains the runtime state of a loaded model,
 /// including its metadata and any resources needed for inference.
-pub struct Model {
+pub struct ModelMetadata {
     /// Unique identifier for the model
     pub label: String,
     /// Human-readable name of the model
@@ -42,7 +41,7 @@ pub struct Model {
     pub block_count: Option<usize>,
 }
 
-impl Model {
+impl ModelMetadata {
     pub fn new(
         label: String,
         name: String,
@@ -206,7 +205,7 @@ impl Model {
         }
 
         // Step 5: Create the model instance
-        let mut model: Model = Self::new(
+        let mut model: ModelMetadata = Self::new(
             label,
             name,
             size,
@@ -294,31 +293,7 @@ impl Model {
             return Err("Memory map is empty".into());
         }
 
-        // 3. Check tensor data accessibility
-        tracing::info!("Validating tensor data accessibility for {} tensors...", self.tensors.len());
-
-        for tensor in &self.tensors {
-            // Calculate the bytes needed for this tensor. However this is only
-            // for validation purposes. We do not actually store any data here. its used only when
-            // the model is being loaded to ensure that the model is not corrupted.
-            let bytes_needed = match calculate_tensor_size(tensor) {
-                Ok(size) => size,
-                Err(e) => {
-                    tracing::error!("Error calculating size for tensor '{}': {}", tensor.name, e);
-                    return Err(format!("Error calculating size for tensor '{}': {}", tensor.name, e).into());
-                }
-            };
-            
-            if tensor.offset as usize + bytes_needed > self.data.len() {
-                tracing::error!("Tensor '{}' extends beyond memory map bounds", tensor.name);
-                return Err(format!(
-                    "Tensor '{}' extends beyond memory map bounds (offset: {}, size: {}, total: {}, map size: {})",
-                    tensor.name, tensor.offset, bytes_needed, tensor.offset as usize + bytes_needed, self.data.len()
-                ).into());
-            }
-        }
-
-        // 4. Check that essential tensors are accessible
+        // 3. Check that essential tensors are accessible (based on names in self.tensors)
         self.check_transformer_architecture();
 
         tracing::info!("Model validation completed successfully");
