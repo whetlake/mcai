@@ -12,7 +12,8 @@ max_tokens = 512
 # Context window size
 context_size = 2048
 # Number of layers to offload to GPU (0 = CPU only). Automatically uses Metal on macOS if > 0.
-n_gpu_layers = 0
+# Setting to a high number like 99 tells llama.cpp to offload as many as possible.
+n_gpu_layers = 99
 # Use memory mapping (mmap) if possible (reduces initial RAM usage).
 use_mmap = true
 # Force the system to keep the model in RAM (mlock). Requires sufficient RAM.

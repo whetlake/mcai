@@ -1,10 +1,11 @@
 use std::error::Error;
 use rustyline::DefaultEditor;
 use crate::config::Settings;
-use std::io::Write;
+use std::io::{Write, stdout};
 use reqwest;
 use serde::Deserialize;
 use colored::*;
+use futures::StreamExt;
 // Add color constants
 const GREEN: &str = "\x1b[32m";
 const CYAN: &str = "\x1b[36m";
@@ -239,41 +240,68 @@ pub async fn chat_loop(settings: &Settings) -> Result<(), Box<dyn Error + Send +
                         
                         if model_attached {
                             if let Some(label) = &current_model_label {                               
-                                // Send the message to the inference engine
-                                let url = format!("http://{}:{}/api/v1/generate", settings.server.host, settings.server.port);
-                                let client = reqwest::Client::new();
-                                let request_body = serde_json::json!({
-                                    "prompt": input
-                                });
-                                
+                                let url = format!("{}/api/v1/generate", server_url);
+                                let request_body = serde_json::json!({ "prompt": input });
+
                                 match client.post(&url).json(&request_body).send().await {
                                     Ok(response) => {
-                                        match response.text().await {
-                                            Ok(text) => {
-                                                if let Ok(json) = serde_json::from_str::<serde_json::Value>(&text) {
-                                                    if let Some(data) = json.get("data") {
-                                                        if let Some(response_text) = data.get("response").and_then(|r| r.as_str()) {
-                                                            // Print the model's response
-                                                            println!("{BOLD}[{}]{RESET} {}", label.yellow(), response_text.bright_cyan());
-                                                        } else {
-                                                            println!("Error: Invalid response format");
+                                        if response.status().is_success() {
+                                            // Make stream mutable to call next()
+                                            let mut byte_stream = response.bytes_stream(); 
+
+                                            // Print the model label once before the stream starts
+                                            print!("\n{BOLD}[{}]{RESET} ", label.yellow()); 
+                                            // Flush immediately to ensure label appears before stream data
+                                            stdout().flush().unwrap(); 
+
+                                            // Process the stream of byte chunks
+                                            while let Some(chunk_result) = byte_stream.next().await {
+                                                match chunk_result {
+                                                    Ok(bytes) => {
+                                                        let text_chunk = String::from_utf8_lossy(&bytes);
+                                                        for line in text_chunk.lines() {
+                                                            // DEBUG: Print the raw line if it starts with data:
+                                                            if line.starts_with("data:") {
+                                                                // eprintln!("[RAW SSE LINE]: {:?}", line);
+
+                                                                // Get payload after "data:", removing AT MOST one leading space
+                                                                let potential_payload = &line[5..];
+                                                                let data_str = potential_payload.strip_prefix(' ').unwrap_or(potential_payload);
+
+                                                                // Only print if the final data_str is not just whitespace
+                                                                if !data_str.trim().is_empty() { 
+                                                                    // Print the processed data string
+                                                                    print!("{}", data_str.bright_cyan()); 
+                                                                    stdout().flush().unwrap();
+                                                                }
+                                                            }
                                                         }
-                                                    } else if let Some(message) = json.get("message").and_then(|m| m.as_str()) {
-                                                        println!("Error: {}", message);
-                                                    } else {
-                                                        println!("Failed to parse response");
+                                                    },
+                                                    Err(e) => {
+                                                        // Print error and stop processing stream for this request
+                                                        println!("{}Error reading stream chunk: {}{}", YELLOW, e, RESET);
+                                                        break; 
                                                     }
-                                                } else {
-                                                    println!("Failed to parse response as JSON");
                                                 }
-                                            },
-                                            Err(e) => {
-                                                println!("Error reading response: {}", e);
+                                            }
+                                            // Print a final newline after the stream is fully consumed
+                                            println!();
+
+                                        } else {
+                                            // Handle non-successful HTTP status codes
+                                            let status = response.status();
+                                            match response.text().await {
+                                                Ok(text) => {
+                                                    println!("{}Error: Server returned status {}. Response: {}{}", YELLOW, status, text, RESET);
+                                                },
+                                                Err(e) => {
+                                                    println!("{}Error: Server returned status {} but failed to read response body: {}{}", YELLOW, status, e, RESET);
+                                                }
                                             }
                                         }
                                     },
                                     Err(e) => {
-                                        println!("Error sending request: {}", e);
+                                        println!("{}Error sending request: {}{}", YELLOW, e, RESET);
                                     }
                                 }
                             }

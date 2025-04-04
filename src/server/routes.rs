@@ -2,17 +2,19 @@ use axum::{
     Json, 
     extract::State, 
     response::IntoResponse,
-    http::StatusCode
+    http::StatusCode,
+    response::sse::{Sse, Event},
 };
 use std::sync::Arc;
 use tracing::{info, error};
+use futures::stream::StreamExt;
+use std::convert::Infallible;
 
 use crate::llm::engine::InferenceEngine;
 use crate::llm::registry::{ModelEntry, ModelRegistry};
 use super::types::{
     ApiResponse, 
     GenerateRequest, 
-    GenerateResponse, 
     AttachModelRequest, 
     AttachModelResponse
 };
@@ -100,25 +102,36 @@ pub async fn attach_model(
     }
 }
 
-/// Handles the generate endpoint for text generation
+/// Handles the generate endpoint for text generation using Server-Sent Events (SSE)
 pub async fn generate(
     State(engine): State<Arc<InferenceEngine>>,
     Json(request): Json<GenerateRequest>
 ) -> impl IntoResponse {
-    match engine.generate(&request.prompt) {
-        Ok(response) => {
-            Json(ApiResponse {
-                status: "success".to_string(),
-                data: Some(GenerateResponse { response }),
-                message: None,
-            })
+    info!("SSE Generate endpoint called with prompt: {}", &request.prompt);
+
+    match engine.generate(&request.prompt).await {
+        Ok(llm_stream) => {
+            let sse_stream = llm_stream.filter_map(|result| async move {
+                match result {
+                    Ok(piece) => Some(Ok::<_, Infallible>(Event::default().data(piece))),
+                    Err(e) => {
+                        error!("Error during LLM generation stream: {}", e);
+                        None
+                    }
+                }
+            });
+
+            Sse::new(sse_stream).into_response()
         },
         Err(e) => {
-            Json(ApiResponse {
-                status: "error".to_string(),
-                data: None,
-                message: Some(e.to_string()),
-            })
+            error!("Failed to initiate generation stream: {}", e);
+            (StatusCode::INTERNAL_SERVER_ERROR, 
+             Json(ApiResponse::<()> {
+                 status: "error".to_string(),
+                 data: None,
+                 message: Some(format!("Failed to start generation: {}", e)),
+             })
+            ).into_response()
         }
     }
 }

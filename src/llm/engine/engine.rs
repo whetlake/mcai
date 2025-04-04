@@ -8,6 +8,8 @@ use crate::gguf::TensorInfo;
 use llama_cpp::{LlamaModel, LlamaParams};
 use std::sync::RwLock;
 use crate::config::Settings;
+use std::pin::Pin;
+use futures::stream::Stream;
 
 /// The core inference engine that manages model state and operations.
 ///
@@ -102,20 +104,38 @@ impl InferenceEngine {
         // Now, load the model again using llama_cpp for actual inference
         tracing::info!("Loading model via llama_cpp: {}", model_path.display());
         
-        // Configure LlamaParams from settings
+        // Store parameters locally before creating LlamaParams
+        let n_gpu_layers = self.settings.inference.n_gpu_layers;
+        let use_mmap = self.settings.inference.use_mmap;
+        let use_mlock = self.settings.inference.use_mlock;
+
+        // Configure LlamaParams from local variables
         let llama_params = LlamaParams {
-            n_gpu_layers: self.settings.inference.n_gpu_layers,
-            use_mmap: self.settings.inference.use_mmap,
-            use_mlock: self.settings.inference.use_mlock,
-            // Keep other params as default for now, adjust if needed
+            n_gpu_layers, // Use local variable
+            use_mmap,     // Use local variable
+            use_mlock,    // Use local variable
             ..Default::default()
         };
 
-        tracing::info!("Using LlamaParams: n_gpu_layers={}, use_mmap={}, use_mlock={}", 
-            llama_params.n_gpu_layers, llama_params.use_mmap, llama_params.use_mlock);
+        // Log the specific parameters being used for model loading (using tracing)
+        tracing::info!(
+            n_gpu_layers,
+            use_mmap,
+            use_mlock,
+            "Attempting to load model with LlamaParams (tracing)"
+        );
             
-        let active_model = LlamaModel::load_from_file(&model_path, llama_params)
+        let active_model = LlamaModel::load_from_file(&model_path, llama_params) // llama_params is moved here
             .map_err(|e| format!("Failed to load model with llama_cpp: {}", e))?;
+        
+        // Print confirmation AFTER successful load, using local variables
+        println!(
+            "---> [DEBUG] Model loaded via llama_cpp using LlamaParams: n_gpu_layers={}, use_mmap={}, use_mlock={}",
+            n_gpu_layers, // Print local variable
+            use_mmap,     // Print local variable
+            use_mlock     // Print local variable
+        );
+
         let active_model_arc = Arc::new(active_model);
         {
             let mut active_model = self.active_model.write().map_err(|e| e.to_string())?;
@@ -154,31 +174,28 @@ impl InferenceEngine {
         self.current_model.read().map(|m| m.is_some()).unwrap_or(false)
     }
 
-    /// Generates text from the current model using the provided prompt. This is the function that gets the user
-    /// input and generates the response via the inference context.
-    ///
-    /// # Arguments
-    ///
-    /// * `prompt` - The input text to generate a response for
-    ///
-    /// # Returns
-    ///
-    /// A Result containing the generated text or an error
-    pub fn generate(&self, prompt: &str) -> Result<String, Box<dyn Error + Send + Sync>> {
-        // Check if a model is attached
+    /// Generates text from the current model using the provided prompt.
+    /// Returns a stream of generated text chunks.
+    pub async fn generate(&self, prompt: &str) 
+        -> Result<Pin<Box<dyn Stream<Item = Result<String, Box<dyn Error + Send + Sync>>> + Send>>, Box<dyn Error + Send + Sync>>
+    {
         if !self.is_model_attached() {
             return Err("No model attached".into());
         }
         
-        // Get a reference to the inference context
-        let mut inference_context = self.inference_context.write().map_err(|e| e.to_string())?;
+        // Get a read lock to access the Option<InferenceContext>
+        let inference_context_guard = self.inference_context.read()
+            .map_err(|e| format!("Failed to read lock inference_context: {}", e))?;
         
-        // Check if we have an inference context
-        let context = inference_context.as_mut()
-            .ok_or_else(|| "No inference context available")?;
-        
-        // Process the input and generate a response
-        context.process_input(prompt)
+        // Get a reference to the context within the lock guard.
+        if let Some(context) = inference_context_guard.as_ref() { 
+            // Call process_input on the reference.
+            // The returned stream is now 'static and doesn't borrow the guard.
+            Ok(context.process_input(prompt.to_string())) 
+        } else {
+            Err("Inference context unexpectedly missing despite model being attachedso".into())
+        }
+        // Guard is dropped here, releasing the lock. Stream is independent.
     }
 
     /// Detaches the current model and clears all related state.
