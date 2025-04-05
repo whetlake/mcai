@@ -30,32 +30,6 @@ use config::Settings;
 /// during the chat session
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
-    // --- Control BLAS/Accelerate internal threading ---
-    // Prevent potential thread contention and improve performance of large matmuls
-    // by limiting the underlying library (Accelerate/OpenBLAS/MKL) to one thread.
-    // Set the appropriate environment variable based on the OS.
-    // #[cfg(target_os = "macos")]
-    // {
-    //     // Set variable for Apple's Accelerate framework
-    //     std::env::set_var("VECLIB_MAXIMUM_THREADS", "1");
-    //     println!("INFO: Setting VECLIB_MAXIMUM_THREADS=1 for macOS Accelerate framework.");
-    // }
-    // #[cfg(not(target_os = "macos"))]
-    // {
-    //     // Assume OpenBLAS or MKL on other systems (adjust if using a different BLAS)
-    //     // Check if OPENBLAS_NUM_THREADS is already set, otherwise default to 1
-    //     if std::env::var("OPENBLAS_NUM_THREADS").is_err() {
-    //          std::env::set_var("OPENBLAS_NUM_THREADS", "1");
-    //          println!("INFO: Setting OPENBLAS_NUM_THREADS=1 (or override with environment variable).");
-    //     }
-    //     // Check if MKL_NUM_THREADS is already set, otherwise default to 1
-    //     if std::env::var("MKL_NUM_THREADS").is_err() {
-    //         std::env::set_var("MKL_NUM_THREADS", "1");
-    //         println!("INFO: Setting MKL_NUM_THREADS=1 (or override with environment variable).");
-    //     }
-    //     // Add checks for other BLAS libraries if necessary
-    // }
-    // --- End BLAS/Accelerate control ---
 
     // Load settings first
     let settings = Settings::new()?;
