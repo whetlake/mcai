@@ -146,7 +146,8 @@ pub async fn chat_loop(settings: &Settings) -> Result<(), Box<dyn Error + Send +
                         if let Ok(model_number) = model_number_str.parse::<usize>() {
                             
                             let request_body = serde_json::json!({
-                                "model_number": model_number
+                                "model_number": model_number,
+                                "user_label": user_provided_label
                             });
                             
                             match client.post(format!("{}/api/v1/attach", server_url))
