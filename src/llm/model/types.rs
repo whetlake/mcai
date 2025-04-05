@@ -29,11 +29,13 @@ pub struct ModelParameters {
 /// absolute directory paths.
 #[derive(Serialize, Deserialize)]
 pub struct ModelDetails {
+    /// Unique identifier for the model
+    pub uuid: String,
     /// Position in the model list (optional)
     pub number: Option<usize>,
-    /// Short identifier for the model
-    pub label: String,
-    /// Human-readable name
+    /// Short identifier for the model given by the user (optional)
+    pub user_label: Option<String>,
+    /// Human-readable name, long name
     pub name: String,
     /// Size category (e.g., "7B")
     pub size: String,

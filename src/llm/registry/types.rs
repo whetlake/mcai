@@ -12,7 +12,7 @@ pub struct ModelEntry {
     pub number: Option<usize>,
     /// Filename of the model file (relative to models directory)
     pub filename: String,
-    /// Short identifier/label for the model
+    /// Short identifier/label for the model if it exists
     pub label: String,
     /// Human-readable name of the model
     pub name: String,

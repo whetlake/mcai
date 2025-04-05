@@ -31,12 +31,14 @@ pub struct CurrentModelResponse {
 #[derive(Deserialize)]
 pub struct AttachModelRequest {
     pub model_number: usize,
+    pub user_label: Option<String>,
 }
 
 /// Response after attaching a model
-#[derive(Serialize)]
+#[derive(Serialize, Deserialize)]
 pub struct AttachModelResponse {
-    pub name: String,
-    pub label: String,
-    pub greeting: String,
+    pub name: String, // Actual model name
+    pub user_label: Option<String>, // Label given by the user (optional)
+    pub greeting: String, // The first greeting message from the model
+    pub uuid: String, // The UUID assigned to this model session
 } 

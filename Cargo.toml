@@ -30,3 +30,4 @@ rayon = "1.10.0"
 llama_cpp = "0.3.2"
 futures = "0.3.31"
 async-stream = "0.3.6"
+uuid = { version = "1.16.0", features = ["v4"] }

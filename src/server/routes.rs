@@ -29,7 +29,6 @@ pub async fn health_check() -> &'static str {
 /// Returns a list of all available models in JSON format.
 /// The models are sorted by label for consistent ordering.
 pub async fn list_models(State(registry): State<Arc<ModelRegistry>>) -> impl IntoResponse {
-    info!("Models endpoint called");
     
     // Get the model registry
     match registry.registry.read() {
@@ -77,13 +76,14 @@ pub async fn attach_model(
         });
     }
 
-    match engine.attach_model(request.model_number) {
+    match engine.attach_model(request.model_number, request.user_label) {
         Ok(model) => {
             info!("Successfully attached model: {}", model.name);
             let response = AttachModelResponse {
                 name: model.name.clone(),
-                label: model.label.clone(),
+                user_label: model.user_label.clone(),
                 greeting: format!("Hello, thank you for choosing {}. Type to start interaction or type 'mcai help' to see more commands.", model.name),
+                uuid: model.uuid.clone()
             };
             Json(ApiResponse {
                 status: "success".to_string(),

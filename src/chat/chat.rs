@@ -3,9 +3,10 @@ use rustyline::DefaultEditor;
 use crate::config::Settings;
 use std::io::{Write, stdout};
 use reqwest;
-use serde::Deserialize;
 use colored::*;
 use futures::StreamExt;
+// Use the shared definition from server types
+use crate::server::types::AttachModelResponse;
 use super::display::{display_models_table, display_model_metadata, display_tensor_info};
 
 // Add color constants
@@ -15,15 +16,6 @@ const BRIGHT_CYAN: &str = "\x1b[96m";
 const RESET: &str = "\x1b[0m";
 const YELLOW: &str = "\x1b[33m";
 const BOLD: &str = "\x1b[1m";
-
-
-// Add this struct to deserialize the model response
-#[derive(Deserialize)]
-struct AttachModelResponse {
-    name: String,
-    label: String,
-    greeting: String,
-}
 
 fn print_help(model_attached: bool) {
     println!("\n{CYAN}MCAI Chat Commands{RESET}");
@@ -138,12 +130,20 @@ pub async fn chat_loop(settings: &Settings) -> Result<(), Box<dyn Error + Send +
                     // Attach model (only when no model is attached)
                     cmd if !model_attached && cmd.starts_with("attach ") => {
                         let parts: Vec<&str> = cmd.split_whitespace().collect();
-                        if parts.len() != 2 {
-                            println!("Usage: attach <model_number>");
+                        // Expecting "attach <number>" or "attach <number> <label...>"
+                        if parts.len() < 2 {
+                            println!("Usage: attach <model_number> [label]");
                             continue;
                         }
+
+                        let model_number_str = parts[1];
+                        let user_provided_label: Option<String> = if parts.len() >= 3 {
+                            Some(parts[2..].join(" ")) // Join remaining parts for multi-word labels
+                        } else {
+                            None
+                        };
                         
-                        if let Ok(model_number) = parts[1].parse::<usize>() {
+                        if let Ok(model_number) = model_number_str.parse::<usize>() {
                             
                             let request_body = serde_json::json!({
                                 "model_number": model_number
@@ -162,36 +162,50 @@ pub async fn chat_loop(settings: &Settings) -> Result<(), Box<dyn Error + Send +
                                                         json.get("data").unwrap_or(&serde_json::Value::Null).clone()
                                                     ) {
                                                         
-                                                        // Print the model greeting
+                                                        // --- Corrected Logic (Take 3) ---
+                                                        // 1. Determine the label for the initial greeting AND the ongoing chat prompt:
+                                                        //    Use the label from the server response (`model_data.label`) if available (`Some`), 
+                                                        //    otherwise use the model name (`model_data.name`).
+                                                        let display_label = model_data.user_label.as_ref().unwrap_or(&model_data.name);
+
+                                                        // Print the model greeting using the determined display label
                                                         println!("{BOLD}[{}]{RESET} {}", 
-                                                            model_data.label.yellow(), 
+                                                            display_label.yellow(), // Use display_label here
                                                             model_data.greeting.bright_cyan()
                                                         );
                                                         
                                                         model_attached = true;
-                                                        // Store the model label for future messages
-                                                        current_model_label = Some(model_data.label);
+                                                        // Store the same label for future messages
+                                                        // We clone display_label because it's a reference (&String) from unwrap_or, 
+                                                        // and current_model_label needs an owned String.
+                                                        current_model_label = Some(display_label.clone()); // Use display_label here
+                                                    } else {
+                                                        // Handle case where data exists but doesn't match AttachModelResponse
+                                                        println!("{}Error: Successfully attached model, but failed to parse model details from response.{}", YELLOW, RESET);
+                                                        // Still mark as attached, but maybe use a placeholder label?
+                                                        model_attached = true;
+                                                        current_model_label = user_provided_label.or_else(|| Some(format!("Model {}", model_number))); // Fallback label
                                                     }
                                                 } else if let Some(message) = json.get("message").and_then(|m| m.as_str()) {
                                                     println!("Error: {}", message);
                                                 } else {
-                                                    println!("Failed to attach model");
+                                                    println!("Failed to attach model (unknown reason)");
                                                 }
                                             } else {
-                                                println!("Failed to parse response");
+                                                println!("Failed to parse server response as JSON");
                                             }
                                         },
                                         Err(e) => {
-                                            println!("Error reading response: {}", e);
+                                            println!("Error reading response body: {}", e);
                                         }
                                     }
                                 },
                                 Err(e) => {
-                                    println!("Error sending request: {}", e);
+                                    println!("Error sending attach request: {}", e);
                                 }
                             }
                         } else {
-                            println!("Invalid model number: {}", parts[1]);
+                            println!("Invalid model number: {}", model_number_str);
                         }
                     },
                     // Get metadata (only when a model is attached)

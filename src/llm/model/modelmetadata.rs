@@ -13,7 +13,7 @@ use tracing;
 /// This struct contains the runtime state of a loaded model,
 /// including its metadata and any resources needed for inference.
 pub struct ModelMetadata {
-    /// Unique identifier for the model
+    /// Short identifier/label for the model if it exists
     pub label: String,
     /// Human-readable name of the model
     pub name: String,

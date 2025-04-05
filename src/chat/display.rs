@@ -9,9 +9,6 @@ use chrono::{Utc, TimeZone};
 /// 
 /// * `json_response` - The JSON response from the server containing model data
 pub fn display_models_table(json_response: &str) {
-    // Remove debug output
-    // println!("Processing model data...");
-    
     if let Ok(value) = serde_json::from_str::<Value>(json_response) {
         if let Some(data) = value.get("data") {
             if let Some(data_array) = data.as_array() {

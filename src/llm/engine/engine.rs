@@ -10,6 +10,7 @@ use std::sync::RwLock;
 use crate::config::Settings;
 use std::pin::Pin;
 use futures::stream::Stream;
+use uuid::Uuid;
 
 /// The core inference engine that manages model state and operations.
 ///
@@ -60,11 +61,14 @@ impl InferenceEngine {
     /// # Returns
     ///
     /// A Result containing the attached model details or an error
-    pub fn attach_model(&self, model_number: usize) -> Result<ModelDetails, Box<dyn Error + Send + Sync>> {
+    pub fn attach_model(&self, model_number: usize, user_label: Option<String>) -> Result<ModelDetails, Box<dyn Error + Send + Sync>> {
+        // Generate a UUID for the model session
+        let model_session_uuid = Uuid::new_v4().to_string();
+
         // Get the model entry from the registry. That is the model number in the registry.
         let model_entry = self.model_registry.get_model_by_number(model_number)?;
         
-        // Create the full path to the model file
+        // Create the full path to the model file where the model will be loaded from
         let model_path = self.model_registry.get_model_path(&model_entry.filename);
 
         // Load the model (using original GGUFReader based Model::load)
@@ -86,7 +90,7 @@ impl InferenceEngine {
         // Set the current model which is the label of the model
         {
             let mut current_model = self.current_model.write().map_err(|e| e.to_string())?;
-            *current_model = Some(model_entry.label.clone());
+            *current_model = Some(model_session_uuid.clone());
         }
         
         // Set the active metadata (GGUF info)
@@ -151,8 +155,9 @@ impl InferenceEngine {
         
         // Return the model details (populated from gguf_model)
         Ok(ModelDetails {
+            uuid: model_session_uuid.clone(),
             number: model_entry.number,
-            label: model_entry.label,
+            user_label: user_label,
             name: model_entry.name,
             size: model_size,
             architecture: model_architecture,
@@ -256,8 +261,9 @@ impl InferenceEngine {
 
         // Return the model details
         Ok(ModelDetails {
+            uuid: "".to_string(), // Not relevant for current model, but the response expects it
             number: None, // Not relevant for current model
-            label: model.label.clone(),
+            user_label: Some(model.label.clone()),
             name: model.name.clone(),
             size: model.size.clone(),
             architecture: model.architecture.clone(),
