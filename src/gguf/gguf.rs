@@ -11,10 +11,13 @@ use tracing::{info, error, debug};
 
 pub struct GGUFReader {
     /// Path to the GGUF file
+    #[allow(dead_code)]
     pub path: PathBuf,
     /// Whether the file is a valid GGUF file
+    #[allow(dead_code)]
     pub is_valid_gguf: bool,
     /// Number of tensors in the file
+    #[allow(dead_code)]
     pub tensor_count: u64,
     /// Metadata key-value pairs
     pub metadata: BTreeMap<String, (String, GGUFValue)>,
@@ -27,7 +30,7 @@ pub struct GGUFReader {
 }
 
 /// The magic number that identifies GGUF files
-const GGUF_MAGIC: u32 = 0x46554747; // "GGUF" in ASCII
+const _GGUF_MAGIC: u32 = 0x46554747; // "GGUF" in ASCII
 
 impl GGUFReader {
     pub fn new<P: AsRef<Path>>(path: P) -> Result<Self, Box<dyn Error + Send + Sync>> {
@@ -153,7 +156,7 @@ fn read_metadata_kv(file: &mut File, version: u32) -> Result<(String, String, GG
             let mut array = Vec::with_capacity(arr_len as usize);
             
             // Single loop to handle all elements
-            for i in 0..arr_len {
+            for _i in 0..arr_len {
                 if element_type == 8 { // STRING
                     let str_val = gguf_utils::read_string(file, version, false)?;
                     array.push(GGUFValue::String(str_val));

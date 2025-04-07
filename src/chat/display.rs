@@ -215,7 +215,7 @@ pub fn display_tensor_info(json_response: &str) {
                 .set_content_arrangement(ContentArrangement::Dynamic);
 
                 for tensor in tensors {
-                    if let (Some(name), Some(dims), Some(data_type), Some(n_dims)) = (
+                    if let (Some(name), Some(dims), Some(data_type), Some(_n_dims)) = (
                         tensor.get("name").and_then(|v| v.as_str()),
                         tensor.get("dims").and_then(|v| v.as_array()),
                         tensor.get("data_type").and_then(|v| v.as_str()),
@@ -250,5 +250,60 @@ pub fn display_tensor_info(json_response: &str) {
         }
     } else {
         println!("{}", "Failed to parse tensor information".red());
+    }
+}
+
+/// Displays attached model information in a formatted table
+/// 
+/// # Arguments
+/// 
+/// * `json_response` - The JSON response from the server containing attached model info
+pub fn display_attached_models(json_response: &str) {
+    if let Ok(value) = serde_json::from_str::<Value>(json_response) {
+        if let Some(data) = value.get("data") {
+            // Print header
+            println!("\n{}", "Attached Model Instances".cyan().bold());
+            println!("{}", "=".repeat(60).bright_black());
+
+            if let Some(models) = data.as_array() {
+                if models.is_empty() {
+                    println!("{}", "No models currently attached.".yellow());
+                    return;
+                }
+
+                let mut table = Table::new();
+                table.set_header(vec![
+                    Cell::new("UUID").fg(comfy_table::Color::Yellow).add_attribute(Attribute::Bold),
+                    Cell::new("Label").fg(comfy_table::Color::Cyan).add_attribute(Attribute::Bold),
+                    Cell::new("Model Name").fg(comfy_table::Color::Green).add_attribute(Attribute::Bold),
+                    Cell::new("Registry #").fg(comfy_table::Color::Magenta).add_attribute(Attribute::Bold),
+                ])
+                .load_preset(comfy_table::presets::UTF8_FULL)
+                .set_content_arrangement(ContentArrangement::Dynamic);
+
+                for model in models {
+                    let uuid = model.get("uuid").and_then(|v| v.as_str()).unwrap_or("N/A");
+                    // Handle optional user_label
+                    let user_label = model.get("user_label").and_then(|v| v.as_str()).unwrap_or("-"); 
+                    let name = model.get("name").and_then(|v| v.as_str()).unwrap_or("N/A");
+                    let number = model.get("number").and_then(|v| v.as_u64()).map(|n| n.to_string()).unwrap_or_else(|| "N/A".to_string());
+
+                    table.add_row(vec![
+                        Cell::new(uuid).fg(comfy_table::Color::Yellow),
+                        Cell::new(user_label).fg(comfy_table::Color::Cyan),
+                        Cell::new(name).fg(comfy_table::Color::Green),
+                        Cell::new(number).fg(comfy_table::Color::Magenta).set_alignment(CellAlignment::Center),
+                    ]);
+                }
+
+                println!("{}\n", table);
+            } else {
+                println!("{}", "No attached model information available".yellow());
+            }
+        } else if let Some(message) = value.get("message").and_then(|m| m.as_str()) {
+            println!("{}: {}", "Error".red(), message);
+        }
+    } else {
+        println!("{}", "Failed to parse attached model information".red());
     }
 } 

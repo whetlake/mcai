@@ -115,7 +115,8 @@ pub fn is_gguf_file<P: AsRef<Path>>(path: P) -> bool {
 }
 
 /// Get the size in bytes of a specific GGUF value type
-pub fn get_type_size(value_type: u32, version: u32) -> Result<u64, Box<dyn Error + Send + Sync>> {
+#[allow(dead_code)]
+pub fn get_type_size(value_type: u32, _version: u32) -> Result<u64, Box<dyn Error + Send + Sync>> {
     match value_type {
         0 => Ok(1), // UINT8
         1 => Ok(1), // INT8

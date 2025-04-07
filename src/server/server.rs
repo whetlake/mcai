@@ -38,6 +38,8 @@ impl ApiServer {
             .route("/api/v1/drop", post(routes::drop_model))
             .route("/api/v1/metadata", get(routes::get_metadata))
             .route("/api/v1/tensors", get(routes::get_tensors))
+            .route("/api/v1/attached", get(routes::list_attached_models))
+            .route("/api/v1/rename", post(routes::rename_model_route))
             .with_state(engine_state);
             
         // Create a router for registry-based routes

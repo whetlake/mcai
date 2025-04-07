@@ -451,12 +451,4 @@ impl ModelMetadata {
         println!("\nTotal number of tensors: {}", self.tensors.len());
     }
 
-    /// Get a reference to the model's raw memory-mapped data
-    ///
-    /// This provides access to the underlying raw model data for direct access
-    /// by components like Tensor that need to read and process raw tensor data.
-    pub fn raw_data(&self) -> &[u8] {
-        &self.data
-    }
-
 }
