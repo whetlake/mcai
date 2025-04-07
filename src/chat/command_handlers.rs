@@ -40,7 +40,6 @@ pub(super) struct ChatContext<'a> {
 const YELLOW: &str = "\x1b[33m";
 const RESET: &str = "\x1b[0m";
 const BOLD: &str = "\x1b[1m";
-const BRIGHT_CYAN: &str = "\x1b[96m";
 
 // --- Moved Command Handler Functions (Marked pub(super)) ---
 
@@ -246,7 +245,7 @@ pub(super) async fn handle_generate(
     prompt: &str,
 ) {
      if let Some(label) = context.current_model_label {
-         let url = format!("{}/api/v1/generate", context.server_url);
+         let url: String = format!("{}/api/v1/generate", context.server_url);
          // TODO: Need to send the UUID or label of the current context
          let request_body = serde_json::json!({
              "prompt": prompt
@@ -256,8 +255,10 @@ pub(super) async fn handle_generate(
              Ok(response) => {
                  if response.status().is_success() {
                      let mut byte_stream = response.bytes_stream();
+                     // Print a newline to separate the user input from the model output
                      print!("\n{BOLD}[{}]{RESET} ", label.yellow());
                      stdout().flush().unwrap();
+ 
                      while let Some(chunk_result) = byte_stream.next().await {
                          match chunk_result {
                              Ok(bytes) => {

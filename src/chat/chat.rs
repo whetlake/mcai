@@ -78,7 +78,7 @@ pub async fn chat_loop(settings: &Settings) -> Result<(), Box<dyn Error + Send +
 
     loop {
         let prompt_prefix = if model_attached {
-            format!("{BOLD}[{}]{RESET}> ", current_model_label.as_deref().unwrap_or("?").yellow())
+            "> ".to_string()
         } else {
             "> ".to_string()
         };
