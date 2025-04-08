@@ -71,34 +71,75 @@ pub(super) async fn handle_list_attached(context: &ChatContext<'_>) {
 
 pub(super) async fn handle_drop_model(
     context: &mut ChatContext<'_>,
-    // TODO: Add identifier parameter later if needed for `drop <id>`
+    identifier: Option<&str>, // Accept optional identifier
 ) {
-     // Need to handle optional identifier for drop
-     let url = format!("{}/api/v1/drop", context.server_url); // Add identifier as query param later
-     match context.client.post(url).send().await {
-         Ok(response) => match response.text().await {
-             Ok(text) => {
-                 if let Ok(json) = serde_json::from_str::<serde_json::Value>(&text) {
-                     if json.get("status").and_then(|s| s.as_str()) == Some("success") {
-                         println!("Model dropped successfully");
-                         // If the dropped model was the active one, reset state
-                         // TODO: Need logic to check if the *current* context's model was dropped
-                         *context.model_attached = false;
-                         *context.current_model_label = None;
-                         *context.current_model_uuid = None; // Clear the UUID
-                     } else if let Some(message) = json.get("message").and_then(|m| m.as_str()) {
-                         println!("Error: {}", message);
-                     } else {
-                         println!("Failed to drop model");
-                     }
-                 } else {
-                     println!("Failed to parse drop response");
-                 }
-             }
-             Err(e) => println!("Error reading drop response: {}", e),
-         },
-         Err(e) => println!("Error sending drop request: {}", e),
-     }
+    let mut url = format!("{}/api/v1/drop", context.server_url);
+    let target_description: String; // For user messages
+
+    // Determine the target description and modify URL if identifier is provided
+    if let Some(id) = identifier {
+        url.push_str(&format!("?identifier={}", id));
+        target_description = format!("model '{}'", id);
+    } else {
+        // No identifier provided - target the currently active model (if any)
+        if let Some(current_uuid) = context.current_model_uuid.as_deref() {
+            // Target current model by its specific UUID for clarity on server logs
+             url.push_str(&format!("?identifier={}", current_uuid)); // Use identifier param even for current UUID
+             target_description = context.current_model_label.as_deref()
+                .map(|lbl| format!("current model '{}'", lbl))
+                .unwrap_or_else(|| format!("current model (UUID: {})", current_uuid));
+        } else {
+             // No identifier AND no active model context
+            println!("{}Cannot drop: No active model context. Use 'mcai drop <identifier>' or 'drop <identifier>'.{}", YELLOW, RESET);
+            return;
+        }
+    }
+
+    println!("Attempting to drop {}", target_description);
+
+    match context.client.post(url).send().await {
+        Ok(response) => match response.text().await {
+            Ok(text) => {
+                if let Ok(json) = serde_json::from_str::<serde_json::Value>(&text) {
+                    if json.get("status").and_then(|s| s.as_str()) == Some("success") {
+                        println!("Successfully dropped {}.", target_description);
+
+                        // --- Check if the *active* context model was dropped ---
+                        let mut active_context_dropped = false;
+                        if let Some(active_uuid) = context.current_model_uuid.as_deref() {
+                            if let Some(id) = identifier { // Use the original identifier passed to the function
+                                // Check if provided identifier matches active UUID or label
+                                if id == active_uuid || Some(id) == context.current_model_label.as_deref() {
+                                    active_context_dropped = true;
+                                }
+                            } else {
+                                // No identifier was provided, so the active model *was* the target
+                                active_context_dropped = true;
+                            }
+                        } // else: no active context, nothing to clear
+
+                        if active_context_dropped {
+                            println!("Clearing active context.");
+                            *context.model_attached = false;
+                            *context.current_model_label = None;
+                            *context.current_model_uuid = None;
+                        }
+                        // --- End check ---
+
+                    } else if let Some(message) = json.get("message").and_then(|m| m.as_str()) {
+                        println!("{}Error dropping {}: {}{}", YELLOW, target_description, message, RESET);
+                    } else {
+                        println!("{}Failed to drop {} (unknown server error).{}", YELLOW, target_description, RESET);
+                    }
+                } else {
+                     println!("{}Failed to parse drop response from server for {}.{}", YELLOW, target_description, RESET);
+                     eprintln!("Raw response: {}", text);
+                }
+            }
+            Err(e) => println!("{}Error reading drop response for {}: {}{}", YELLOW, target_description, e, RESET),
+        },
+        Err(e) => println!("{}Error sending drop request for {}: {}{}", YELLOW, target_description, e, RESET),
+    }
 }
 
 pub(super) fn handle_detach_model(
@@ -226,9 +267,21 @@ pub(super) async fn handle_activate_context(
 }
 
 
-pub(super) async fn handle_get_metadata(context: &ChatContext<'_> /*, identifier: Option<&str> */) {
-    // TODO: Add identifier query param if needed
-    let url = format!("{}/api/v1/metadata", context.server_url);
+pub(super) async fn handle_get_metadata(context: &ChatContext<'_>, identifier: Option<&str>) {
+    let mut url = format!("{}/api/v1/metadata", context.server_url);
+    if let Some(id) = identifier {
+        url.push_str(&format!("?identifier={}", id));
+         println!("Fetching metadata for identifier: {}", id);
+    } else {
+         println!("Fetching metadata for current model.");
+         // If no identifier, the server will attempt to find the sole model if only one exists,
+         // or use the active one if specified implicitly.
+         // We can optionally add the current UUID here if we want to be explicit when no id is given:
+         // if let Some(uuid) = context.current_model_uuid.as_deref() {
+         //     url.push_str(&format!("?identifier={}", uuid));
+         // }
+    }
+
     match context.client.get(url).send().await {
         Ok(response) => match response.text().await {
             Ok(text) => display_model_metadata(&text),
@@ -238,9 +291,20 @@ pub(super) async fn handle_get_metadata(context: &ChatContext<'_> /*, identifier
     }
 }
 
-pub(super) async fn handle_get_tensors(context: &ChatContext<'_> /*, identifier: Option<&str> */) {
-    // TODO: Add identifier query param if needed
-    let url = format!("{}/api/v1/tensors", context.server_url);
+pub(super) async fn handle_get_tensors(context: &ChatContext<'_>, identifier: Option<&str>) {
+    let mut url = format!("{}/api/v1/tensors", context.server_url);
+     if let Some(id) = identifier {
+        url.push_str(&format!("?identifier={}", id));
+        println!("Fetching tensors for identifier: {}", id);
+    } else {
+        println!("Fetching tensors for current model.");
+        // Similar logic as get_metadata: server handles implicit target if no identifier.
+        // Optionally add current UUID to be explicit:
+        // if let Some(uuid) = context.current_model_uuid.as_deref() {
+        //     url.push_str(&format!("?identifier={}", uuid));
+        // }
+    }
+
     match context.client.get(url).send().await {
          Ok(response) => match response.text().await {
              Ok(text) => display_tensor_info(&text),

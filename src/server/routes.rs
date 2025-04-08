@@ -25,11 +25,6 @@ use crate::llm::model::ModelDetails;
 use crate::gguf::TensorInfo;
 use crate::llm::engine::AttachedModelInfo;
 
-#[derive(Deserialize, Debug)]
-pub(crate) struct OptionalUuidParams {
-    uuid: Option<String>,
-}
-
 // Struct to capture optional identifier from query params
 #[derive(Deserialize, Debug)]
 pub(crate) struct OptionalIdentifierParams {
@@ -129,38 +124,33 @@ pub async fn generate(
         &request.prompt, &request.model_session_uuid
     );
 
-    // Pass the optional UUID (as &str) and prompt to the engine
+    // Pass the specific optional UUID from the body and prompt to the engine
     match engine.generate(request.model_session_uuid.as_deref(), &request.prompt).await {
-        // Engine returns Ok((actual_uuid, stream))
         Ok((actual_uuid, llm_stream)) => {
             let sse_stream = llm_stream.filter_map(move |result| {
-                // Clone actual_uuid so it can be moved into the async block for each event
                 let uuid_clone = actual_uuid.clone();
                 async move {
                     match result {
                         Ok(piece) => {
-                            // Create a JSON payload: {"uuid": "...", "text": "..."}
                             let json_payload = json!({
                                 "uuid": uuid_clone,
                                 "text": piece
                             });
-                            // Serialize the JSON payload to a string for the data field
                             match serde_json::to_string(&json_payload) {
                                 Ok(data_string) => Some(Ok::<_, Infallible>(Event::default().data(data_string))),
                                 Err(e) => {
                                     error!("Failed to serialize SSE data to JSON: {}", e);
-                                    None // Skip this event if serialization fails
+                                    None
                                 }
                             }
                         },
                         Err(e) => {
                             error!("Error during LLM generation stream: {}", e);
-                            None // Skip event on stream error
+                            None
                         }
                     }
                 }
             });
-
             Sse::new(sse_stream).into_response()
         },
         Err(e) => {
@@ -177,18 +167,17 @@ pub async fn generate(
 }
 
 /// Handles the drop endpoint for detaching a model instance.
-/// Accepts an optional 'uuid' query parameter.
+/// Accepts an optional 'identifier' (UUID or label) query parameter.
 pub async fn drop_model(
     State(engine): State<Arc<InferenceEngine>>,
-    Query(params): Query<OptionalUuidParams>,
+    Query(params): Query<OptionalIdentifierParams>,
 ) -> impl IntoResponse {
-    info!("Drop model endpoint called. UUID: {:?}", params.uuid);
+    info!("Drop model endpoint called. Identifier: {:?}", params.identifier);
 
-    // Call the engine's drop_model, passing the optional UUID directly
-    // .as_deref() converts Option<String> -> Option<&str>
-    match engine.drop_model(params.uuid.as_deref()) {
+    // Call the engine's drop_model, passing the optional identifier
+    match engine.drop_model(params.identifier.as_deref()) {
         Ok(_) => {
-            info!("Successfully dropped model (UUID: {:?})", params.uuid);
+            info!("Successfully dropped model (Identifier: {:?})", params.identifier);
             Json(ApiResponse::<()> {
                 status: "success".to_string(),
                 data: None,
@@ -196,7 +185,7 @@ pub async fn drop_model(
             })
         },
         Err(e) => {
-            error!("Failed to drop model (UUID: {:?}): {}", params.uuid, e);
+            error!("Failed to drop model (Identifier: {:?}): {}", params.identifier, e);
             Json(ApiResponse::<()> {
                 status: "error".to_string(),
                 data: None,
@@ -207,28 +196,28 @@ pub async fn drop_model(
 }
 
 /// Gets metadata for a specific attached model instance.
-/// Accepts an optional 'uuid' query parameter.
+/// Accepts an optional 'identifier' (UUID or label) query parameter.
 pub async fn get_metadata(
     State(engine): State<Arc<InferenceEngine>>,
-    Query(params): Query<OptionalUuidParams>, // Extract query parameters
+    Query(params): Query<OptionalIdentifierParams>,
 ) -> impl IntoResponse {
-    info!("Metadata endpoint called. UUID: {:?}", params.uuid);
+    info!("Metadata endpoint called. Identifier: {:?}", params.identifier);
 
-    // Call the engine's get_metadata, passing the optional UUID
-    match engine.get_metadata(params.uuid.as_deref()) {
+    // Call the engine's get_metadata, passing the optional identifier
+    match engine.get_metadata(params.identifier.as_deref()) {
         Ok(metadata) => {
-            info!("Successfully retrieved metadata (UUID: {:?})", params.uuid);
+            info!("Successfully retrieved metadata (Identifier: {:?})", params.identifier);
             Json(ApiResponse {
                 status: "success".to_string(),
-                data: Some(metadata), // Return the ModelDetails
+                data: Some(metadata),
                 message: None,
             })
         },
         Err(e) => {
-            error!("Failed to retrieve metadata (UUID: {:?}): {}", params.uuid, e);
+            error!("Failed to retrieve metadata (Identifier: {:?}): {}", params.identifier, e);
             Json(ApiResponse {
                 status: "error".to_string(),
-                data: None::<ModelDetails>, // Explicitly type None for clarity
+                data: None::<ModelDetails>,
                 message: Some(e.to_string()),
             })
         }
@@ -236,28 +225,28 @@ pub async fn get_metadata(
 }
 
 /// Gets tensor information for a specific attached model instance.
-/// Accepts an optional 'uuid' query parameter.
+/// Accepts an optional 'identifier' (UUID or label) query parameter.
 pub async fn get_tensors(
     State(engine): State<Arc<InferenceEngine>>,
-    Query(params): Query<OptionalUuidParams>, // Extract query parameters
+    Query(params): Query<OptionalIdentifierParams>,
 ) -> impl IntoResponse {
-    info!("Tensors endpoint called. UUID: {:?}", params.uuid);
+    info!("Tensors endpoint called. Identifier: {:?}", params.identifier);
 
-    // Call the engine's get_tensors, passing the optional UUID
-    match engine.get_tensors(params.uuid.as_deref()) {
+    // Call the engine's get_tensors, passing the optional identifier
+    match engine.get_tensors(params.identifier.as_deref()) {
         Ok(tensors) => {
-            info!("Successfully retrieved tensors (UUID: {:?})", params.uuid);
+            info!("Successfully retrieved tensors (Identifier: {:?})", params.identifier);
             Json(ApiResponse {
                 status: "success".to_string(),
-                data: Some(tensors), // Return the Vec<TensorInfo>
+                data: Some(tensors),
                 message: None,
             })
         },
         Err(e) => {
-            error!("Failed to retrieve tensors (UUID: {:?}): {}", params.uuid, e);
+            error!("Failed to retrieve tensors (Identifier: {:?}): {}", params.identifier, e);
             Json(ApiResponse {
                 status: "error".to_string(),
-                data: None::<Vec<TensorInfo>>, // Explicitly type None for clarity
+                data: None::<Vec<TensorInfo>>,
                 message: Some(e.to_string()),
             })
         }
@@ -269,8 +258,8 @@ pub async fn get_tensors(
 /// Takes `new_label` in JSON body.
 pub async fn rename_model_route(
     State(engine): State<Arc<InferenceEngine>>,
-    Query(params): Query<OptionalIdentifierParams>, // Get optional identifier from query
-    Json(request): Json<RenameModelRequest>,      // Get new_label from body
+    Query(params): Query<OptionalIdentifierParams>,
+    Json(request): Json<RenameModelRequest>,
 ) -> impl IntoResponse {
     info!("Rename model endpoint called. Identifier: {:?}, New Label: {}", params.identifier, request.new_label);
 
@@ -313,7 +302,7 @@ pub async fn list_attached_models(
         }
         Err(e) => {
             error!("Failed to retrieve list of attached models: {}", e);
-            let response = ApiResponse::<Vec<AttachedModelInfo>> { // Specify type for error case
+            let response = ApiResponse::<Vec<AttachedModelInfo>> {
                 status: "error".to_string(),
                 data: None,
                 message: Some(format!("Failed to get attached models: {}", e)),

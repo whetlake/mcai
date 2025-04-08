@@ -226,35 +226,34 @@ impl InferenceEngine {
         // Read lock (models_guard) is released here.
     }
 
-    /// Detaches a model instance.
+    /// Detaches a model instance based on an identifier (UUID or label).
     ///
-    /// If a `model_session_uuid` is provided, detaches the specific instance.
+    /// If `identifier` is provided, attempts to find and detach the specific instance.
     /// If `None` is provided, detaches the sole model instance *only if* exactly one is attached.
     ///
     /// # Arguments
     ///
-    /// * `model_session_uuid` - The optional unique UUID of the model instance to detach.
+    /// * `identifier` - The optional unique UUID or user label of the model instance to detach.
     ///
     /// # Returns
     ///
     /// A Result indicating success or an error if:
-    /// - The specified UUID was not found.
+    /// - The specified identifier was not found or was ambiguous.
     /// - `None` was provided, but zero or multiple models were attached.
-    pub fn drop_model(&self, model_session_uuid: Option<&str>) -> Result<(), Box<dyn Error + Send + Sync>> {
+    pub fn drop_model(&self, identifier: Option<&str>) -> Result<(), Box<dyn Error + Send + Sync>> {
         // Acquire a write lock on the active_models map.
         let mut models_guard = self.active_models.write()
             .map_err(|e| format!("Failed to get write lock on active_models: {}", e))?;
 
-        // Use the helper function (with the write lock downgraded for reading) to find the UUID.
-        // Note: We need the UUID as a String here because the borrow checker won't let us
-        // borrow from models_guard while also holding a mutable borrow later for removal.
+        // Use the helper function (with the write lock temporarily borrowed immutably)
+        // to find the UUID based on the provided identifier.
         let uuid_to_remove = {
-            // Create a temporary immutable borrow for the helper function
-            let immutable_guard = &*models_guard;
-            self.find_uuid_for_identifier(model_session_uuid, immutable_guard)?.to_string()
-        };
+            let immutable_guard = &*models_guard; // Immutable borrow for the helper
+            self.find_uuid_for_identifier(identifier, immutable_guard)?.to_string()
+            // immutable_guard borrow ends here
+        }; // uuid_to_remove is now owned
 
-        // Attempt to remove the model instance by its UUID
+        // Attempt to remove the model instance by its resolved UUID
         if models_guard.remove(&uuid_to_remove).is_some() {
             tracing::info!("Successfully dropped model instance with UUID: {}", uuid_to_remove);
             // The ModelInstanceState goes out of scope after remove,
@@ -265,30 +264,30 @@ impl InferenceEngine {
             // but handle defensively.
             Err(format!("Internal error: Failed to remove model instance with UUID '{}' after finding it.", uuid_to_remove).into())
         }
-        // Write lock is released when models_guard goes out of scope at the end of the function.
+        // Write lock is released when models_guard goes out of scope.
     }
 
-    /// Gets metadata for a specific attached model instance.
+    /// Gets metadata for a specific attached model instance based on an identifier.
     ///
-    /// If a `model_session_uuid` is provided, gets details for that specific instance.
+    /// If an `identifier` (UUID or label) is provided, gets details for that specific instance.
     /// If `None` is provided, gets details for the sole model instance *only if* exactly one is attached.
     ///
     /// # Arguments
     ///
-    /// * `model_session_uuid` - The optional unique UUID of the model instance.
+    /// * `identifier` - The optional unique UUID or user label of the model instance.
     ///
     /// # Returns
     ///
     /// A Result containing the model details or an error if:
-    /// - The specified UUID was not found.
+    /// - The specified identifier was not found or was ambiguous.
     /// - `None` was provided, but zero or multiple models were attached.
-    pub fn get_metadata(&self, model_session_uuid: Option<&str>) -> Result<ModelDetails, Box<dyn Error + Send + Sync>> {
+    pub fn get_metadata(&self, identifier: Option<&str>) -> Result<ModelDetails, Box<dyn Error + Send + Sync>> {
         // Acquire a read lock on the active_models map.
         let models_guard = self.active_models.read()
              .map_err(|e| format!("Failed to get read lock on active_models: {}", e))?;
 
-        // Use the helper function to find the UUID.
-        let uuid_str = self.find_uuid_for_identifier(model_session_uuid, &models_guard)?;
+        // Use the helper function to find the UUID based on the identifier.
+        let uuid_str = self.find_uuid_for_identifier(identifier, &models_guard)?;
 
         // Get the instance using the found UUID. This should succeed.
         let instance = models_guard.get(uuid_str)
@@ -304,7 +303,7 @@ impl InferenceEngine {
 
             ModelDetails {
                 uuid: uuid.to_string(), // Use the actual instance UUID
-                number: None, // Registry number isn't stored in instance state, set to None
+                number: Some(instance.model_number), // Use stored registry number
                 user_label: instance.user_label.clone(), // Use the instance's user label
                 name: model_metadata.name.clone(),
                 size: model_metadata.size.clone(),
@@ -329,27 +328,27 @@ impl InferenceEngine {
         // Read lock is released when models_guard goes out of scope.
     }
 
-    /// Gets tensor information for a specific attached model instance.
+    /// Gets tensor information for a specific attached model instance based on an identifier.
     ///
-    /// If a `model_session_uuid` is provided, gets tensor info for that specific instance.
+    /// If an `identifier` (UUID or label) is provided, gets tensor info for that specific instance.
     /// If `None` is provided, gets tensor info for the sole model instance *only if* exactly one is attached.
     ///
     /// # Arguments
     ///
-    /// * `model_session_uuid` - The optional unique UUID of the model instance.
+    /// * `identifier` - The optional unique UUID or user label of the model instance.
     ///
     /// # Returns
     ///
     /// A Result containing a vector of tensor information or an error if:
-    /// - The specified UUID was not found.
+    /// - The specified identifier was not found or was ambiguous.
     /// - `None` was provided, but zero or multiple models were attached.
-    pub fn get_tensors(&self, model_session_uuid: Option<&str>) -> Result<Vec<TensorInfo>, Box<dyn Error + Send + Sync>> {
+    pub fn get_tensors(&self, identifier: Option<&str>) -> Result<Vec<TensorInfo>, Box<dyn Error + Send + Sync>> {
         // Acquire a read lock on the active_models map.
         let models_guard = self.active_models.read()
              .map_err(|e| format!("Failed to get read lock on active_models: {}", e))?;
 
         // Use the helper function to find the UUID.
-        let uuid_str = self.find_uuid_for_identifier(model_session_uuid, &models_guard)?;
+        let uuid_str = self.find_uuid_for_identifier(identifier, &models_guard)?;
 
         // Get the instance using the found UUID. This should succeed.
         let instance = models_guard.get(uuid_str)

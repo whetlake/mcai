@@ -153,7 +153,7 @@ pub async fn chat_loop(settings: &Settings) -> Result<(), Box<dyn Error + Send +
 
                 // --- Command Matching ---
                 match command_lowercase.as_str() {
-                    // Handle exact matches
+                    // Handle exact matches that are context-dependent
                     cmd if (*context.model_attached && cmd == "mcai help") || (!*context.model_attached && cmd == "help") => {
                         print_help(*context.model_attached)
                     },
@@ -167,22 +167,64 @@ pub async fn chat_loop(settings: &Settings) -> Result<(), Box<dyn Error + Send +
                     cmd if (*context.model_attached && cmd == "mcai attached") || (!*context.model_attached && cmd == "attached") => {
                         handle_list_attached(&context).await
                     },
-                    "mcai drop" if *context.model_attached => {
-                        handle_drop_model(&mut context).await
-                    },
                     "mcai detach" if *context.model_attached => {
                         handle_detach_model(&mut context)
                     },
-                    "mcai metadata" if *context.model_attached => {
-                        handle_get_metadata(&context).await
+                    // Handle commands that take optional identifiers differently
+                    cmd if cmd.starts_with("mcai drop") && *context.model_attached => {
+                        let identifier = input_trimmed["mcai drop".len()..].trim();
+                        if identifier.is_empty() {
+                            handle_drop_model(&mut context, None).await; // Drop current context model
+                        } else {
+                            handle_drop_model(&mut context, Some(identifier)).await; // Drop specific model
+                        }
                     },
-                    "mcai tensors" if *context.model_attached => {
-                        handle_get_tensors(&context).await
+                     cmd if cmd.starts_with("drop ") && !*context.model_attached => {
+                        let identifier = input_trimmed["drop ".len()..].trim();
+                         if !identifier.is_empty() {
+                            handle_drop_model(&mut context, Some(identifier)).await; // Drop specific model when detached
+                         } else {
+                             println!("Usage: drop <identifier> (when no model context is active)");
+                         }
                     },
-                     // Handle non-exact matches
+                    cmd if cmd.starts_with("mcai metadata") && *context.model_attached => {
+                         let identifier = input_trimmed["mcai metadata".len()..].trim();
+                         if identifier.is_empty() {
+                            handle_get_metadata(&context, None).await; // Metadata for current context model
+                         } else {
+                             // Allow specifying model even when attached, e.g. `mcai metadata other_label`
+                             handle_get_metadata(&context, Some(identifier)).await;
+                         }
+                    },
+                     cmd if cmd.starts_with("metadata ") && !*context.model_attached => {
+                         let identifier = input_trimmed["metadata ".len()..].trim();
+                         if !identifier.is_empty() {
+                             handle_get_metadata(&context, Some(identifier)).await; // Metadata for specific model when detached
+                         } else {
+                             println!("Usage: metadata <identifier> (when no model context is active)");
+                         }
+                     },
+                    cmd if cmd.starts_with("mcai tensors") && *context.model_attached => {
+                         let identifier = input_trimmed["mcai tensors".len()..].trim();
+                          if identifier.is_empty() {
+                            handle_get_tensors(&context, None).await; // Tensors for current context model
+                         } else {
+                             handle_get_tensors(&context, Some(identifier)).await;
+                         }
+                    },
+                     cmd if cmd.starts_with("tensors ") && !*context.model_attached => {
+                         let identifier = input_trimmed["tensors ".len()..].trim();
+                          if !identifier.is_empty() {
+                             handle_get_tensors(&context, Some(identifier)).await; // Tensors for specific model when detached
+                          } else {
+                              println!("Usage: tensors <identifier> (when no model context is active)");
+                          }
+                     },
+
+                     // Handle other non-exact matches
                     _ => {
                         if *context.model_attached {
-                            // If model is already attached, handle the following commands
+                            // If model is already attached, handle remaining commands
                             if command_lowercase.starts_with("mcai attach new ") {
                                 let prefix_len = "mcai attach new ".len();
                                 let args: Vec<&str> = input_trimmed[prefix_len..].split_whitespace().collect();
@@ -213,7 +255,7 @@ pub async fn chat_loop(settings: &Settings) -> Result<(), Box<dyn Error + Send +
                                     }
                                 }
                             } else {
-                                command_handled = false;
+                                command_handled = false; // Not a recognized 'mcai' command when attached
                             }
                         } else {
                             // If model is not attached
@@ -240,7 +282,7 @@ pub async fn chat_loop(settings: &Settings) -> Result<(), Box<dyn Error + Send +
                                     println!("       (You must specify the model to rename when no context is active)");
                                 }
                             } else {
-                                command_handled = false;
+                                command_handled = false; // Not a recognized command when detached
                             }
                         }
                     }
