@@ -66,5 +66,7 @@ pub struct TensorsResponse {
 // Struct for the rename request body
 #[derive(Deserialize, Debug)]
 pub struct RenameModelRequest {
+    #[allow(dead_code)] // Silence warning as it's used by serde/axum
+    pub identifier: Option<String>, // The UUID or current label to rename
     pub new_label: String,
 } 

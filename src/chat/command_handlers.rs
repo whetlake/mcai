@@ -8,6 +8,8 @@ use futures::StreamExt;
 use reqwest::Client;
 use serde::Deserialize;
 use std::io::{stdout, Write};
+use std::sync::Arc;
+use std::sync::atomic::AtomicBool;
 
 // Define a struct to represent the SSE JSON payload
 #[derive(Deserialize, Debug)]
@@ -19,7 +21,7 @@ struct GenerateResponseChunk {
 
 // Define context struct to hold shared resources and state references
 /// Represents the context for chat command operations
-///
+///s
 /// This struct holds references to shared resources and state that are needed
 /// across different command handlers in the chat interface.
 ///
@@ -30,12 +32,14 @@ struct GenerateResponseChunk {
 /// * `model_attached` - Mutable reference to a boolean indicating if a model is currently attached
 /// * `current_model_label` - Mutable reference to the optional label of the currently active model
 /// * `current_model_uuid` - Mutable reference to the optional UUID of the currently active model
+/// * `interrupt` - Arc<AtomicBool> to handle interrupt signals
 pub(super) struct ChatContext<'a> {
     pub client: &'a Client,
     pub server_url: &'a str,
     pub model_attached: &'a mut bool,
     pub current_model_label: &'a mut Option<String>,
     pub current_model_uuid: &'a mut Option<String>,
+    pub interrupt: Arc<AtomicBool>,
 }
 
 // Add color constants needed by handlers
@@ -250,61 +254,153 @@ pub(super) async fn handle_generate(
     context: &mut ChatContext<'_>,
     prompt: &str,
 ) {
-     if let Some(label) = context.current_model_label {
-         if let Some(uuid) = context.current_model_uuid {
-             let url: String = format!("{}/api/v1/generate", context.server_url);
-             // Send the active UUID
-             let request_body = serde_json::json!({
-                 "prompt": prompt,
-                 "model_session_uuid": uuid // Send the current UUID
-             });
+    if let Some(label) = context.current_model_label.as_ref() {
+        if let Some(uuid) = context.current_model_uuid.as_ref() {
+            let url: String = format!("{}/api/v1/generate", context.server_url);
+            // Send the active UUID
+            let request_body = serde_json::json!({
+                "prompt": prompt,
+                "model_session_uuid": uuid // Send the current UUID
+            });
 
-             match context.client.post(&url).json(&request_body).send().await {
-                 Ok(response) => {
-                     if response.status().is_success() {
-                         let mut byte_stream = response.bytes_stream();
-                         // Print a newline to separate the user input from the model output
-                         print!("\n{BOLD}[{}]{RESET} ", label.yellow());
-                         stdout().flush().unwrap();
- 
-                         while let Some(chunk_result) = byte_stream.next().await {
-                             match chunk_result {
-                                 Ok(bytes) => {
-                                     let text_chunk = String::from_utf8_lossy(&bytes);
-                                     for line in text_chunk.lines() {
-                                         if line.starts_with("data:") {
-                                             let potential_payload = &line[5..];
-                                             let data_str = potential_payload.strip_prefix(' ').unwrap_or(potential_payload);
-                                             match serde_json::from_str::<GenerateResponseChunk>(data_str) {
-                                                 Ok(chunk_data) => {
-                                                     if !chunk_data.text.trim().is_empty() {
-                                                         print!("{}", chunk_data.text.bright_cyan());
-                                                         stdout().flush().unwrap();
-                                                     }
-                                                 }
-                                                 Err(e) => eprintln!("\n{}[SSE Parse Error]: Failed to parse chunk '{}': {}{}", YELLOW, data_str, e, RESET),
-                                             }
-                                         }
-                                     }
-                                 },
-                                 Err(e) => { println!("{}Error reading stream chunk: {}{}", YELLOW, e, RESET); break; }
+            match context.client.post(&url).json(&request_body).send().await {
+                Ok(response) => {
+                    if response.status().is_success() {
+                        let mut byte_stream = response.bytes_stream();
+                        // Print a newline to separate the user input from the model output
+                        print!("\n{BOLD}[{}]{RESET} ", label.yellow());
+                        stdout().flush().unwrap();
+
+                        let mut interrupted = false; // Track if stream was interrupted
+
+                        while let Some(chunk_result) = byte_stream.next().await {
+                            // Check for interrupt signal
+                            if context.interrupt.load(std::sync::atomic::Ordering::SeqCst) {
+                                println!("\n{}[Generation Interrupted]{}", YELLOW, RESET);
+                                interrupted = true;
+                                break; // Exit the streaming loop
+                            }
+
+                            match chunk_result {
+                                Ok(bytes) => {
+                                    let text_chunk = String::from_utf8_lossy(&bytes);
+                                    for line in text_chunk.lines() {
+                                        if line.starts_with("data:") {
+                                            let potential_payload = &line[5..];
+                                            let data_str = potential_payload.strip_prefix(' ').unwrap_or(potential_payload);
+                                            match serde_json::from_str::<GenerateResponseChunk>(data_str) {
+                                                Ok(chunk_data) => {
+                                                    if !chunk_data.text.trim().is_empty() {
+                                                        print!("{}", chunk_data.text.bright_cyan());
+                                                        stdout().flush().unwrap();
+                                                    }
+                                                }
+                                                Err(e) => eprintln!("\n{}[SSE Parse Error]: Failed to parse chunk '{}': {}{}", YELLOW, data_str, e, RESET),
+                                            }
+                                        }
+                                    }
+                                },
+                                Err(e) => { println!("{}Error reading stream chunk: {}{}", YELLOW, e, RESET); break; }
+                            }
+                        }
+
+                        // Only print final newline if not interrupted (already printed one in interrupt message)
+                        if !interrupted {
+                            println!(); // Final newline
+                        }
+                    } else {
+                        let status = response.status();
+                        match response.text().await {
+                             Ok(text) => println!("{}Error: Server returned status {}. Response: {}{}", YELLOW, status, text, RESET),
+                             Err(e) => println!("{}Error: Server returned status {} but failed to read response body: {}{}", YELLOW, status, e, RESET),
+                        }
+                    }
+                },
+                Err(e) => println!("{}Error sending generate request: {}{}", YELLOW, e, RESET),
+            }
+        } else {
+            println!("{}Internal Error: Current model label is set ('{}'), but UUID is missing.{}", YELLOW, label, RESET);
+        }
+    } else {
+         println!("Internal Error: No current model label set while model_attached is true.");
+    }
+}
+
+// --- Rename Model Handler ---
+
+pub(super) async fn handle_rename_model(
+    context: &mut ChatContext<'_>,
+    old_identifier: Option<&str>, // Optional: UUID or current label
+    new_label: &str,
+) {
+    // Body contains only the new label
+    let request_body = serde_json::json!({
+        "new_label": new_label
+    });
+
+    let base_url = format!("{}/api/v1/rename", context.server_url);
+    
+    // Build the request using reqwest builder
+    let mut request_builder = context.client.post(&base_url).json(&request_body);
+
+    // Add the identifier as a query parameter *only if* it's provided
+    if let Some(identifier) = old_identifier {
+        request_builder = request_builder.query(&[("identifier", identifier)]);
+    }
+
+    match request_builder.send().await {
+        Ok(response) => match response.text().await {
+            Ok(text) => {
+                if let Ok(json) = serde_json::from_str::<serde_json::Value>(&text) {
+                    if json.get("status").and_then(|s| s.as_str()) == Some("success") {
+                        println!("Model instance successfully renamed to '{}'", new_label);
+
+                        // --- Update active context if it was the one renamed ---
+                        let mut context_updated = false;
+
+                        // Check if rename targeted the currently active UUID
+                        if let Some(active_uuid) = context.current_model_uuid.as_deref() {
+                             // Use old_identifier directly if Some, otherwise this check won't match when None was passed
+                            if old_identifier.is_some() && old_identifier.unwrap() == active_uuid {
+                                *context.current_model_label = Some(new_label.to_string());
+                                context_updated = true;
+                                println!("Active context label updated to '{}'.", new_label);
+                            }
+                        }
+
+                        // Check if rename targeted the currently active label (if UUID didn't match or wasn't the identifier)
+                        if !context_updated {
+                            if let Some(active_label) = context.current_model_label.as_deref() {
+                                 // Use old_identifier directly if Some
+                                if old_identifier.is_some() && old_identifier.unwrap() == active_label {
+                                     *context.current_model_label = Some(new_label.to_string());
+                                     context_updated = true;
+                                     println!("Active context label updated to '{}'.", new_label);
+                                }
+                            }
+                        }
+
+                        // Check if rename applied implicitly because no identifier was given AND a model is active
+                        if !context_updated && old_identifier.is_none() {
+                             if *context.model_attached { // Check if a model context is actually active
+                                 *context.current_model_label = Some(new_label.to_string());
+                                 println!("Active context label updated to '{}'.", new_label);
+                                 // No need to update UUID here, as renaming doesn't change it.
                              }
-                         }
-                         println!(); // Final newline
-                     } else {
-                         let status = response.status();
-                         match response.text().await {
-                              Ok(text) => println!("{}Error: Server returned status {}. Response: {}{}", YELLOW, status, text, RESET),
-                              Err(e) => println!("{}Error: Server returned status {} but failed to read response body: {}{}", YELLOW, status, e, RESET),
-                         }
-                     }
-                 },
-                 Err(e) => println!("{}Error sending generate request: {}{}", YELLOW, e, RESET),
-             }
-         } else {
-             println!("{}Internal Error: Current model label is set ('{}'), but UUID is missing.{}", YELLOW, label, RESET);
-         }
-     } else {
-          println!("Internal Error: No current model label set while model_attached is true.");
-     }
+                        }
+                        // --- End context update ---
+
+                    } else if let Some(message) = json.get("message").and_then(|m| m.as_str()) {
+                        println!("Error renaming model: {}", message); // Server-side check errors appear here
+                    } else {
+                        println!("Failed to rename model (unknown server error).");
+                    }
+                } else {
+                    println!("Failed to parse rename response from server.");
+                }
+            }
+            Err(e) => println!("Error reading rename response: {}", e),
+        },
+        Err(e) => println!("Error sending rename request: {}", e),
+    }
 }

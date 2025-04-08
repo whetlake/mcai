@@ -5,6 +5,9 @@ use std::io::Write;
 use reqwest;
 use colored::*;
 use serde::Deserialize;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
+use tokio::signal;
 
 // Import items from the sibling module
 use super::command_handlers::{ 
@@ -18,6 +21,7 @@ use super::command_handlers::{
     handle_get_metadata, 
     handle_get_tensors, 
     handle_generate,
+    handle_rename_model,
 }; 
 
 // Remove direct use, rely on mod.rs declaration - This comment is now incorrect
@@ -77,13 +81,46 @@ pub async fn chat_loop(settings: &Settings) -> Result<(), Box<dyn Error + Send +
     let client = reqwest::Client::new();
     let server_url = format!("http://{}:{}", settings.server.host, settings.server.port);
 
+    // --- Interrupt Handling Setup ---
+    let interrupt_signal = Arc::new(AtomicBool::new(false));
+    let interrupt_for_task = Arc::clone(&interrupt_signal); // Clone Arc for the task
+
+    tokio::spawn(async move {
+        // Loop to handle multiple Ctrl+C signals
+        loop {
+            match signal::ctrl_c().await {
+                Ok(()) => {
+                    // Signal received, set the flag
+                    println!("\n{}[Ctrl+C detected. Press Enter to continue or type next command.]{}", YELLOW, RESET);
+                    interrupt_for_task.store(true, Ordering::SeqCst);
+                    // The flag will be checked by handle_generate or before the next readline call.
+                    // No need to break the loop; await ctrl_c() again.
+                }
+                Err(err) => {
+                    eprintln!("{}Error listening for Ctrl-C signal: {}. Exiting signal handler task.{}", YELLOW, err, RESET);
+                    break; // Exit the loop if there's an error listening
+                }
+            }
+        }
+    });
+    // --- End Interrupt Handling Setup ---
+
     loop {
+        // --- Check and Reset Interrupt Flag Before Prompt ---
+        if interrupt_signal.load(Ordering::SeqCst) {
+            interrupt_signal.store(false, Ordering::SeqCst);
+            println!(); // Print a newline for cleaner prompt display after interrupt message
+        }
+        // --- End Check ---
+
+        // Restore the original prompt logic
         let prompt_prefix = if model_attached {
-            "[you] > ".to_string()
+            "[you] > ".to_string() // Use "[you] > " when attached
         } else {
             "> ".to_string()
         };
-        let readline = rl.readline(&prompt_prefix);
+
+        let readline = rl.readline(&prompt_prefix); // Use the string directly
 
         match readline {
             Ok(input) => {
@@ -102,18 +139,21 @@ pub async fn chat_loop(settings: &Settings) -> Result<(), Box<dyn Error + Send +
                     break;
                 }
 
-                // Create context (Type path uses imported name)
+                // Create context (pass the interrupt Arc)
                 let mut context = ChatContext {
                     client: &client,
                     server_url: &server_url,
                     model_attached: &mut model_attached,
                     current_model_label: &mut current_model_label,
                     current_model_uuid: &mut current_model_uuid,
+                    interrupt: Arc::clone(&interrupt_signal), // Clone Arc for context
                 };
 
                 let mut command_handled = true;
 
+                // --- Command Matching ---
                 match command_lowercase.as_str() {
+                    // Handle exact matches
                     cmd if (*context.model_attached && cmd == "mcai help") || (!*context.model_attached && cmd == "help") => {
                         print_help(*context.model_attached)
                     },
@@ -139,8 +179,10 @@ pub async fn chat_loop(settings: &Settings) -> Result<(), Box<dyn Error + Send +
                     "mcai tensors" if *context.model_attached => {
                         handle_get_tensors(&context).await
                     },
+                     // Handle non-exact matches
                     _ => {
                         if *context.model_attached {
+                            // If model is already attached, handle the following commands
                             if command_lowercase.starts_with("mcai attach new ") {
                                 let prefix_len = "mcai attach new ".len();
                                 let args: Vec<&str> = input_trimmed[prefix_len..].split_whitespace().collect();
@@ -152,10 +194,29 @@ pub async fn chat_loop(settings: &Settings) -> Result<(), Box<dyn Error + Send +
                                 } else {
                                     println!("Usage: mcai switch <label|uuid>");
                                 }
+                            } else if command_lowercase.starts_with("mcai rename ") {
+                                let args_str = input_trimmed["mcai rename ".len()..].trim();
+                                let args: Vec<&str> = args_str.split_whitespace().collect();
+                                match args.len() {
+                                    1 => {
+                                        let new_label = args[0];
+                                        handle_rename_model(&mut context, None, new_label).await;
+                                    }
+                                    2 => {
+                                        let old_identifier = args[0];
+                                        let new_label = args[1];
+                                        handle_rename_model(&mut context, Some(old_identifier), new_label).await;
+                                    }
+                                    _ => {
+                                        println!("Usage: mcai rename [@old_identifier|uuid] <new_label>");
+                                        println!("       (If no identifier is given, attempts to rename the currently active model)");
+                                    }
+                                }
                             } else {
                                 command_handled = false;
                             }
                         } else {
+                            // If model is not attached
                             if command_lowercase.starts_with("attach new ") {
                                 let prefix_len: usize = "attach new ".len();
                                 let args: Vec<&str> = input_trimmed[prefix_len..].split_whitespace().collect();
@@ -167,12 +228,24 @@ pub async fn chat_loop(settings: &Settings) -> Result<(), Box<dyn Error + Send +
                                 } else {
                                     println!("Usage: attach <label|uuid>");
                                 }
+                            } else if command_lowercase.starts_with("rename ") {
+                                let args_str = input_trimmed["rename ".len()..].trim();
+                                let args: Vec<&str> = args_str.split_whitespace().collect();
+                                if args.len() == 2 {
+                                    let old_identifier = args[0];
+                                    let new_label = args[1];
+                                    handle_rename_model(&mut context, Some(old_identifier), new_label).await;
+                                } else {
+                                    println!("Usage: rename <old_identifier|uuid> <new_label>");
+                                    println!("       (You must specify the model to rename when no context is active)");
+                                }
                             } else {
                                 command_handled = false;
                             }
                         }
                     }
                 }
+                // --- End Command Matching ---
 
                 if !command_handled && !input_trimmed.is_empty() {
                     if *context.model_attached {
@@ -190,8 +263,22 @@ pub async fn chat_loop(settings: &Settings) -> Result<(), Box<dyn Error + Send +
                     let _ = rl.add_history_entry(input_trimmed);
                 }
             },
-            Err(_) => {
-                println!("Goodbye!");
+            Err(rustyline::error::ReadlineError::Interrupted) => {
+                if model_attached {
+                    println!("{}[Interrupted. Type 'mcai exit' or 'mcai quit' to exit completly. Press Enter for new prompt.]{}", YELLOW, RESET);
+                } else {
+                    println!("{}[Interrupted. Type 'exit' or 'quit' to exit completly. Press Enter for new prompt.]{}", YELLOW, RESET);
+                }
+                 // The interrupt_signal flag might also be set by the tokio task,
+                 // the check at the start of the loop will handle resetting it.
+                continue;
+            },
+            Err(rustyline::error::ReadlineError::Eof) => {
+                println!("Goodbye! (EOF)");
+                break;
+            }
+            Err(err) => {
+                println!("{}Error reading input: {}{}", YELLOW, err, RESET);
                 break;
             },
         }
