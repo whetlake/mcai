@@ -29,11 +29,13 @@ struct GenerateResponseChunk {
 /// * `server_url` - Base URL of the server API
 /// * `model_attached` - Mutable reference to a boolean indicating if a model is currently attached
 /// * `current_model_label` - Mutable reference to the optional label of the currently active model
+/// * `current_model_uuid` - Mutable reference to the optional UUID of the currently active model
 pub(super) struct ChatContext<'a> {
     pub client: &'a Client,
     pub server_url: &'a str,
     pub model_attached: &'a mut bool,
     pub current_model_label: &'a mut Option<String>,
+    pub current_model_uuid: &'a mut Option<String>,
 }
 
 // Add color constants needed by handlers
@@ -79,6 +81,7 @@ pub(super) async fn handle_drop_model(
                          // TODO: Need logic to check if the *current* context's model was dropped
                          *context.model_attached = false;
                          *context.current_model_label = None;
+                         *context.current_model_uuid = None; // Clear the UUID
                      } else if let Some(message) = json.get("message").and_then(|m| m.as_str()) {
                          println!("Error: {}", message);
                      } else {
@@ -101,6 +104,7 @@ pub(super) fn handle_detach_model(
     println!("Use 'attach new <number> [label]' or 'attach <label|uuid>' to reactivate a context.");
     *context.model_attached = false;
     *context.current_model_label = None;
+    *context.current_model_uuid = None; // Clear the UUID
 }
 
 pub(super) async fn handle_attach_new(
@@ -141,6 +145,7 @@ pub(super) async fn handle_attach_new(
                                  );
                                  *context.model_attached = true;
                                  *context.current_model_label = Some(display_label.clone());
+                                 *context.current_model_uuid = Some(model_data.uuid);
                              } else {
                                  println!("{}Error: Successfully attached model, but failed to parse model details from response.{}", YELLOW, RESET);
                                  *context.model_attached = true; // Still attached
@@ -198,6 +203,7 @@ pub(super) async fn handle_activate_context(
                                      println!("Activated model context: [{}]", display_label.yellow());
                                      *context.model_attached = true; // Ensure state is attached
                                      *context.current_model_label = Some(display_label.clone());
+                                     *context.current_model_uuid = Some(model_info.uuid.clone()); // Store the UUID
                                  } else if potential_matches > 1 {
                                      println!("{}Error: Identifier '{}' is ambiguous and matches multiple models by label.{}", YELLOW, target_identifier, RESET);
                                  } else {
@@ -245,53 +251,58 @@ pub(super) async fn handle_generate(
     prompt: &str,
 ) {
      if let Some(label) = context.current_model_label {
-         let url: String = format!("{}/api/v1/generate", context.server_url);
-         // TODO: Need to send the UUID or label of the current context
-         let request_body = serde_json::json!({
-             "prompt": prompt
-         });
+         if let Some(uuid) = context.current_model_uuid {
+             let url: String = format!("{}/api/v1/generate", context.server_url);
+             // Send the active UUID
+             let request_body = serde_json::json!({
+                 "prompt": prompt,
+                 "model_session_uuid": uuid // Send the current UUID
+             });
 
-         match context.client.post(&url).json(&request_body).send().await {
-             Ok(response) => {
-                 if response.status().is_success() {
-                     let mut byte_stream = response.bytes_stream();
-                     // Print a newline to separate the user input from the model output
-                     print!("\n{BOLD}[{}]{RESET} ", label.yellow());
-                     stdout().flush().unwrap();
+             match context.client.post(&url).json(&request_body).send().await {
+                 Ok(response) => {
+                     if response.status().is_success() {
+                         let mut byte_stream = response.bytes_stream();
+                         // Print a newline to separate the user input from the model output
+                         print!("\n{BOLD}[{}]{RESET} ", label.yellow());
+                         stdout().flush().unwrap();
  
-                     while let Some(chunk_result) = byte_stream.next().await {
-                         match chunk_result {
-                             Ok(bytes) => {
-                                 let text_chunk = String::from_utf8_lossy(&bytes);
-                                 for line in text_chunk.lines() {
-                                     if line.starts_with("data:") {
-                                         let potential_payload = &line[5..];
-                                         let data_str = potential_payload.strip_prefix(' ').unwrap_or(potential_payload);
-                                         match serde_json::from_str::<GenerateResponseChunk>(data_str) {
-                                             Ok(chunk_data) => {
-                                                 if !chunk_data.text.trim().is_empty() {
-                                                     print!("{}", chunk_data.text.bright_cyan());
-                                                     stdout().flush().unwrap();
+                         while let Some(chunk_result) = byte_stream.next().await {
+                             match chunk_result {
+                                 Ok(bytes) => {
+                                     let text_chunk = String::from_utf8_lossy(&bytes);
+                                     for line in text_chunk.lines() {
+                                         if line.starts_with("data:") {
+                                             let potential_payload = &line[5..];
+                                             let data_str = potential_payload.strip_prefix(' ').unwrap_or(potential_payload);
+                                             match serde_json::from_str::<GenerateResponseChunk>(data_str) {
+                                                 Ok(chunk_data) => {
+                                                     if !chunk_data.text.trim().is_empty() {
+                                                         print!("{}", chunk_data.text.bright_cyan());
+                                                         stdout().flush().unwrap();
+                                                     }
                                                  }
+                                                 Err(e) => eprintln!("\n{}[SSE Parse Error]: Failed to parse chunk '{}': {}{}", YELLOW, data_str, e, RESET),
                                              }
-                                             Err(e) => eprintln!("\n{}[SSE Parse Error]: Failed to parse chunk '{}': {}{}", YELLOW, data_str, e, RESET),
                                          }
                                      }
-                                 }
-                             },
-                             Err(e) => { println!("{}Error reading stream chunk: {}{}", YELLOW, e, RESET); break; }
+                                 },
+                                 Err(e) => { println!("{}Error reading stream chunk: {}{}", YELLOW, e, RESET); break; }
+                             }
+                         }
+                         println!(); // Final newline
+                     } else {
+                         let status = response.status();
+                         match response.text().await {
+                              Ok(text) => println!("{}Error: Server returned status {}. Response: {}{}", YELLOW, status, text, RESET),
+                              Err(e) => println!("{}Error: Server returned status {} but failed to read response body: {}{}", YELLOW, status, e, RESET),
                          }
                      }
-                     println!(); // Final newline
-                 } else {
-                     let status = response.status();
-                     match response.text().await {
-                          Ok(text) => println!("{}Error: Server returned status {}. Response: {}{}", YELLOW, status, text, RESET),
-                          Err(e) => println!("{}Error: Server returned status {} but failed to read response body: {}{}", YELLOW, status, e, RESET),
-                     }
-                 }
-             },
-             Err(e) => println!("{}Error sending generate request: {}{}", YELLOW, e, RESET),
+                 },
+                 Err(e) => println!("{}Error sending generate request: {}{}", YELLOW, e, RESET),
+             }
+         } else {
+             println!("{}Internal Error: Current model label is set ('{}'), but UUID is missing.{}", YELLOW, label, RESET);
          }
      } else {
           println!("Internal Error: No current model label set while model_attached is true.");

@@ -70,6 +70,7 @@ pub async fn chat_loop(settings: &Settings) -> Result<(), Box<dyn Error + Send +
     println!("Starting chat session");
     let mut model_attached = false;
     let mut current_model_label: Option<String> = None;
+    let mut current_model_uuid: Option<String> = None;
     print_help(model_attached);
 
     let mut rl = DefaultEditor::new()?;
@@ -78,7 +79,7 @@ pub async fn chat_loop(settings: &Settings) -> Result<(), Box<dyn Error + Send +
 
     loop {
         let prompt_prefix = if model_attached {
-            "> ".to_string()
+            "[you] > ".to_string()
         } else {
             "> ".to_string()
         };
@@ -107,6 +108,7 @@ pub async fn chat_loop(settings: &Settings) -> Result<(), Box<dyn Error + Send +
                     server_url: &server_url,
                     model_attached: &mut model_attached,
                     current_model_label: &mut current_model_label,
+                    current_model_uuid: &mut current_model_uuid,
                 };
 
                 let mut command_handled = true;
