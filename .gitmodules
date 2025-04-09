@@ -1,0 +1,3 @@
+[submodule "llamacpp-sys/llama.cpp"]
+	path = llamacpp-sys/llama.cpp
+	url = https://github.com/ggerganov/llama.cpp.git

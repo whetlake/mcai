@@ -3,8 +3,6 @@ use rustyline::DefaultEditor;
 use crate::config::Settings;
 use std::io::Write;
 use reqwest;
-use colored::*;
-use serde::Deserialize;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use tokio::signal;

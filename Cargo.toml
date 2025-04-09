@@ -3,6 +3,12 @@ name = "mcai"
 version = "0.1.0"
 edition = "2021"
 
+[workspace]
+members = [
+    ".", # Represents the mcai crate in the root directory
+    "llamacpp-sys",
+]
+
 [dependencies]
 anyhow = "1.0.95"
 axum = "0.8.1"
@@ -27,7 +33,6 @@ once_cell = "1.21.0"
 regex = "1.11.1"
 rand = "0.9.0"
 rayon = "1.10.0"
-llama_cpp = "0.3.2"
 futures = "0.3.31"
 async-stream = "0.3.6"
 uuid = { version = "1.16.0", features = ["v4"] }
